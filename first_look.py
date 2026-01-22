@@ -32,19 +32,22 @@ Temp_C = Temp_K - 273.15
 huss_open = xr.open_dataset(huss_fpath)
 huss = huss_open['huss'].sel(time = huss_open['huss'].time.dt.month.isin([12, 1, 2]))
 
-# specific humidity to relative humidity conversion assuming pressure = 101.325 kPa
-P = 87.16 # SHOULDNT BE A CONSTANT PRESSURE
-vapor_press = (huss * P) / (0.622 + huss) # 0.622 is the constant that links pressure ratios to mass ratios
-# magnus formula
-Psat = 0.61078 * np.exp((17.27 * Temp_C) / (Temp_C + 237.3)) # saturated vapor pressure in kPa
-rh =  100 * (Psat / vapor_press) 
+# specific humidity to relative humidity conversion assuming constant pressure (hPa)
+P = 871.6 # SHOULDNT BE A CONSTANT PRESSURE
+# vapor pressure (hPa)
+e = (huss * P) / (0.622) # 0.622 is the constant that links pressure ratios to mass ratios
+# Bolton 1980 Formule - saturation vapor pressure (hPa)
+e_sub_s = 6.112 * np.exp((17.67 * Temp_C) / (Temp_C + 243.5)) # saturated vapor pressure in kPa
+rh =  100 * (e / e_sub_s) 
 
+
+#%%
 
 
 
 R = 8.3145 # J/K/mol ideal gas constant
 M = 18 # g/mol molecular weight
-rh_new = (huss * R * Temp_K) * (100 / (Psat / M))
+rh_new = (huss * R * Temp_K) * (100 / (e_sub_s / M))
 #%%
 # rain = np.where(temp_avg < 277.15, temp_avg, 0)
 # temp_avg > 271.15
