@@ -30,17 +30,28 @@ Temp_K = ((tasmax_ds + tasmin_ds) / 2)
 Temp_C = Temp_K - 273.15 
 
 huss_open = xr.open_dataset(huss_fpath)
-huss = huss_open['huss'].sel(time = huss_open['huss'].time.dt.month.isin([12, 1, 2]))
+spec_hum = huss_open['huss'].sel(time = huss_open['huss'].time.dt.month.isin([12, 1, 2]))
 
-# specific humidity to relative humidity conversion assuming constant pressure (hPa)
-P = 871.6 # SHOULDNT BE A CONSTANT PRESSURE
+### Specific humidity to relative humidity conversion ###
+# assuming constant pressure (hPa)
+P = 871.6 
 # vapor pressure (hPa)
-e = (huss * P) / (0.622) # 0.622 is the constant that links pressure ratios to mass ratios
+e = (spec_hum * P) / (0.622) # 0.622 is the constant that links pressure ratios to mass ratios
 # Bolton 1980 Formule - saturation vapor pressure (hPa)
-e_sub_s = 6.112 * np.exp((17.67 * Temp_C) / (Temp_C + 243.5)) # saturated vapor pressure in kPa
+e_sub_s = 6.112 * np.exp((17.67 * Temp_C) / (Temp_C + 243.5))
+# relative humidity as %
 rh =  100 * (e / e_sub_s) 
 
 
+### Deriving pressure from sea level pressure ###
+a = 0.61 # grams dry air / grams water vapor
+# mixing ratio (%)
+r = spec_hum / (1 - spec_hum) 
+# virtual temperature
+virtual_temp =  Temp_K(1 - (a * r))
+A = 29.3 # m / K
+P1 = 101.325 # standard sea level pressure (kPa)
+delta_z = 29.3 * virtual_temp * np.log(P1 / P2)
 #%%
 
 
