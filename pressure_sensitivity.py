@@ -111,6 +111,7 @@ geo_pot_hgt = gamma * ((r_knot * Z) / (r_knot + Z))
 #%%
 # plot rh as a function of P and visually see the sensitivity of the equation to different inputs
 # analysis of percent change with different inputs
+P = 870 
 
 ### Specific humidity to relative humidity conversion ###
 # vapor pressure (hPa)
@@ -119,3 +120,46 @@ e = (spec_hum * P) / (0.622) # 0.622 is the constant that links pressure ratios 
 e_sub_s = 6.112 * np.exp((17.67 * Temp_C) / (Temp_C + 243.5))
 # relative humidity as %
 rh =  100 * (e / e_sub_s) 
+
+#%%
+# plot rh as a function of P and visually see the sensitivity of the equation to different inputs
+# analysis of percent change with different inputs
+P1 = 770
+
+### Specific humidity to relative humidity conversion ###
+# vapor pressure (hPa)
+e1 = (spec_hum * P1) / (0.622) # 0.622 is the constant that links pressure ratios to mass ratios
+# Bolton 1980 Formule - saturation vapor pressure (hPa)
+e_sub_s1 = 6.112 * np.exp((17.67 * Temp_C) / (Temp_C + 243.5))
+# relative humidity as %
+rh1 =  100 * (e1 / e_sub_s1) 
+
+#%%
+rh = rh.sel(lat=42, lon=-111, method='nearest')
+rh_low = rh1.sel(lat=42, lon=-111, method='nearest')
+
+plt.plot(rh.time, rh, label='870 hPa')
+plt.plot(rh_low.time, rh_low, label='770 hPa')
+plt.legend()
+plt.show()
+
+
+#%%
+location = spec_hum.sel(lat = 42, lon = -111,  method = 'nearest')
+loc_avg = location.mean(dim = 'time')
+#%%
+Temp_C_loc = Temp_C.sel(lat = 42, lon = -111,  method = 'nearest')
+temp_avg = Temp_C_loc.mean(dim = 'time')
+
+#%%
+# plot rh as a function of P and visually see the sensitivity of the equation to different inputs
+# analysis of percent change with different inputs
+P = 790
+
+### Specific humidity to relative humidity conversion ###
+# vapor pressure (hPa)
+e = (loc_avg * P) / (0.622) # 0.622 is the constant that links pressure ratios to mass ratios
+# Bolton 1980 Formule - saturation vapor pressure (hPa)
+e_sub_s = 6.112 * np.exp((17.67 * temp_avg) / (temp_avg + 243.5))
+# relative humidity as %
+rh_samp =  100 * (e / e_sub_s) 
