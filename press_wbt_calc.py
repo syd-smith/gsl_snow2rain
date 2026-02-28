@@ -7,6 +7,7 @@ Created on Thu Feb 19 09:14:26 2026
 """
 
 import numpy as np
+from pathlib import Path
 import xarray as xr
 
 
@@ -34,22 +35,34 @@ def wbt_press_calc(model_name, emission_scenario):
     # spec_hum_DJF = huss_open['huss'].sel(time = huss_open['huss'].time.dt.month.isin([12, 1, 2]))
     spec_hum = spec_hum.load()
     
-    ### elevation data ###
-    elevation_open = xr.open_dataset('/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/gridmet_interp_elevation.nc')
-    elevation_loaded = elevation_open['elevation'].load()
-    elevation_corrected = elevation_loaded.sortby('lat', ascending = True) # reverses the order of lat
-    elevation_assigned = elevation_corrected.assign_coords(lat = spec_hum.lat, lon = spec_hum.lon)
-    elevation = elevation_assigned.expand_dims(time = spec_hum.time) # units: meters
+    ### Elevation data ###
+    elevation_fpath = Path(f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/elevation/'
+                 f'macav2metdata_GSLBIP_{model_name}_{emission_scenario}_elevation.nc')
+    if elevation_fpath.exists():  
+        print('File exists!')
+        print(f'Elevation data found in: {elevation_fpath}')
+        open_elevation = xr.open_dataset(elevation_fpath) 
+        elevation = open_elevation['elevation']
+    else:
+        elevation_open = xr.open_dataset('/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/gridmet_interp_elevation.nc')
+        elevation_loaded = elevation_open['elevation'].load()
+        elevation_corrected = elevation_loaded.sortby('lat', ascending = True) # reverses the order of lat
+        elevation_assigned = elevation_corrected.assign_coords(lat = spec_hum.lat, lon = spec_hum.lon)
+        elevation = elevation_assigned.expand_dims(time = spec_hum.time) # units: meters
+        
+        # save elevation data as netcdf
+        elevation.name = 'elevation'
+        elevation.attrs['units'] = 'm'
+        elevation.to_netcdf(elevation_fpath)
     
-    from pathlib import Path
-
-    fpath = Path(f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/press/'
+    ### Pressure calculation ###
+    P_fpath = Path(f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/press/'
                  f'macav2metdata_GSLBIP_{model_name}_{emission_scenario}_press.nc')
 
-    if fpath.exists():
+    if P_fpath.exists():
         print('File exists!')
-        print(f'Pressure data found in: {fpath}')
-        open_P = xr.open_dataset(fpath) 
+        print(f'Pressure data found in: {P_fpath}')
+        open_P = xr.open_dataset(P_fpath) 
         P = open_P['press']
     else:
         ### calculate pressure based on elevation data ###
@@ -58,29 +71,40 @@ def wbt_press_calc(model_name, emission_scenario):
         P = Ps * np.exp(-elevation / H)
         # P = P.load()
         
+        # save pressure data as netcdf
         P.name = 'press'
         P.attrs['units'] = 'hPa'
-        P.to_netcdf(fpath)
+        P.to_netcdf(P_fpath)
         
-    ### Specific humidity to relative humidity conversion ###
-    # vapor pressure (hPa)
-    e = (spec_hum * P) / (0.622) # 0.622 is the constant that links pressure ratios to mass ratios
-    # Bolton 1980 Formule - saturation vapor pressure (hPa)
-    e_sub_s = 6.112 * np.exp((17.67 * Temp_C) / (Temp_C + 243.5))
-    # relative humidity as %
-    rh =  100 * (e / e_sub_s) 
+    wbt_fpath = Path(f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/wbt/'
+                 f'macav2metdata_GSLBIP_{model_name}_{emission_scenario}_wbt.nc')
     
-    ### wet bulb temperature calculation ###
-    wbt = Temp_C * np.arctan( 0.151977 * ((rh + 8.313659)**(1/2)) ) + \
-            np.arctan(Temp_C + rh) - np.arctan(rh - 1.676331) + \
-                0.00391838 * ((rh)**(3/2)) * np.arctan(0.023101 * rh) - 4.686035
-                
-                
-    wbt.name = 'wbt'
-    wbt.attrs['units'] = 'Degrees C'
-    wbt.to_netcdf(f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/wbt/macav2metdata_GSLBIP_{model_name}_{emission_scenario}_wbt.nc')
-    
-    return P, wbt
+    if wbt_fpath.exists():
+        print('wbt data already saved!')
+        print(f'See -> {wbt_fpath}')
+        open_wbt = xr.open_dataset(wbt_fpath)
+        wbt = open_wbt['wbt']
+        
+    else:
+        ### Specific humidity to relative humidity conversion ###
+        # vapor pressure (hPa)
+        e = (spec_hum * P) / (0.622) # 0.622 is the constant that links pressure ratios to mass ratios
+        # Bolton 1980 Formule - saturation vapor pressure (hPa)
+        e_sub_s = 6.112 * np.exp((17.67 * Temp_C) / (Temp_C + 243.5))
+        # relative humidity as %
+        rh =  100 * (e / e_sub_s) 
+        
+        ### Wet bulb temperature calculation ###
+        wbt = Temp_C * np.arctan( 0.151977 * ((rh + 8.313659)**(1/2)) ) + \
+                np.arctan(Temp_C + rh) - np.arctan(rh - 1.676331) + \
+                    0.00391838 * ((rh)**(3/2)) * np.arctan(0.023101 * rh) - 4.686035
+                    
+        # save wbt data as netcdf
+        wbt.name = 'wbt'
+        wbt.attrs['units'] = 'Degrees C'
+        wbt.to_netcdf(f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/wbt/macav2metdata_GSLBIP_{model_name}_{emission_scenario}_wbt.nc')
+        
+    return elevation, P, wbt
 
-P, wbt = wbt_press_calc('ACCESS-CM2', 'ssp585')
+elevation, P, wbt = wbt_press_calc('KACE-1-0-G', 'ssp585')
 
