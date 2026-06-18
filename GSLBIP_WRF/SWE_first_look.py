@@ -28,7 +28,7 @@ for domain in ['d01', 'd02', 'd03']:
     # add to output list
     SWE_output.append(avg_SWE)
 
-# %%
+
 # plot average SWE
 fig, ax = plt.subplots(nrows = 1, ncols = 3, figsize = (10, 6), subplot_kw = {'projection': ccrs.PlateCarree()})
 flat_axes = ax.flatten()
