@@ -4,9 +4,9 @@
 #SBATCH --partition=strong-kp
 #SBATCH --nodes=1                   # Single node is best for single script multi-threading
 #SBATCH --ntasks=16   
-#SBATCH --mem=50G 
-#SBATCH --output=wrf_preprocessor.out     # Standard output log file (%j dynamically inserts Job ID)
-#SBATCH --error=wrf_preprocessor.err      # Error log file
+#SBATCH --mem=55G 
+#SBATCH --output=SWE.out     # Standard output log file (%j dynamically inserts Job ID)
+#SBATCH --error=SWE.err      # Error log file
 
 # Exit script immediately if any command fails
 set -e
