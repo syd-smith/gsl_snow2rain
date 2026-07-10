@@ -211,3 +211,5 @@ __marimo__/
 *.nc
 *.png
 *.ncrcat.tmp
+*.err
+*.out
