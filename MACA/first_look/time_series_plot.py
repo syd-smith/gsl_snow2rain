@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# %%
 """
 Created on Thu Feb 26 14:58:41 2026
 
@@ -7,7 +6,6 @@ Created on Thu Feb 26 14:58:41 2026
 """
 
 import matplotlib.pyplot as plt
-import nc_time_axis
 import sys
 print(sys.executable)
 import xarray as xr
@@ -58,3 +56,5 @@ for ax in axs:
     ax.set_xlabel('')
 
 
+
+# %%

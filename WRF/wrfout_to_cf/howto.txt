@@ -1,0 +1,67 @@
+# Created: Aug. 11th, 2025
+# Updated: June 12th, 2026
+# By: Savanna Wolvin, s.wolvin@utah.edu
+
+# Summary:
+The following scripts were made to intake WRF output files and format them in compliance with CF-Conventions. Description of CF-Conventions can be found here: 
+
+https://cfconventions.org/ 
+
+The original NCL script designed to re-format the WRF output can be found here: 
+
+https://sundowner.colorado.edu/wrfout_to_cf/overview.html
+
+
+# Formatting Process:
+
+
+### Step 1: Subset WRF files if desired
+
+If the file sizes are really large, most commonly with the inner-most domain, you may need to subset the NetCDF files, this can be done using the python script subset_d03_to_12hrly.py. It does not "exactly" subset the files by every 12 hours, but its pretty close.
+
+
+### Step 2: Update wrfout_to_cf.ncl
+
+Within wrfout_to_cf.ncl, the following lists lines to update:
+
+L. 115-116 -> assign missing values, TrueMissingValue is currently the missing value in WRF, and MissingValue is what the value is converted to.
+
+L. 168 -> assign the time units
+
+L. 170 -> choose desired pressure levels in units hPa
+
+L. 217-281 -> update global attributes to be listed in each NetCDF file. Feel free to add or delete from the list of attributes.
+
+L. 284-453 -> By assign True or False, choose all variables desired in the new WRF files
+
+L. 606-619 -> Update projection information.
+
+
+
+### Step 3: Update projection information
+
+Start by formulating the projection information using calc_wrf_proj.py. This script allows you to point to the WRF files, loads in one file at a time, and prints the x and y projection variable values. 
+
+The xx variable in calc_wrf_proj.py corresponds to the x variable in wrfout_to_cf.ncl on L. 630, and the yy variable in calc_wrf_proj.py corresponds to the y variable in wrfout_to_cf.ncl on L. 624.
+
+These variables in the NCL file corresponds to the distances from the "center point" of the projections.
+
+
+
+### Step 4: Setup NCL Environment
+
+From the terminal, create the ncl environment needed to run the formatting script. This is done using the following command:
+
+conda env create -f ncl_stable.yml
+
+
+
+### Step 5: Update Batch Script
+
+wrfout_to_cf.sbatch was written to be send to the CHPC Slurm to then loop through every WRF file and format them. You will have to update almost the entire script, such as the file locations, subsetting the file names, etc. It may be easier to use this as a template for your own shell script. 
+
+Essentially, the NCL script is run using the following command and processes one file at a time:
+
+ncl 'dir_in="'${dir_in}'"' 'file_in="'${file_in}'"' 'dir_out="'${dir_out}'"' 'file_out="'${file_out}'.nc"' wrfout_to_cf.ncl
+
+
