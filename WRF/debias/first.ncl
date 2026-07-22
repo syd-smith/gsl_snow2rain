@@ -9,6 +9,11 @@ Date: July 16, 2026
 ; 3. Extract and rename the varible of interest -> create an if statement that calculates specific humidity from qvapor (q/q+1)
 ; 4. Compress the file for storage efficiency
 
+; --- Load WRF Contribution Libraries ---
+load "$NCARG_ROOT/lib/ncarg/nclscripts/csm/gsn_code.ncl"
+load "$NCARG_ROOT/lib/ncarg/nclscripts/csm/gsn_csm.ncl"
+load "$NCARG_ROOT/lib/ncarg/nclscripts/csm/contributed.ncl"
+load "$NCARG_ROOT/lib/ncarg/nclscripts/wrf/WRFUserARW.ncl"
 
 ; --- Compression Settings ---
 ; Must be set before opening the output file
@@ -21,10 +26,10 @@ vname := tostring(vname)
 vnew  := tostring(vnew)
 
 ; 1. Open input files as read only to not overwrite any original data
-f_in = addfile(dir_in + file_in, "r")
+f_in = addfile(f_path_in, "r")
 
 ; 2. Create output files to save new data in
-f_out = addfile(dir_corrected + file_corrected, "c")
+f_out = addfile(dir_corrected + vnew + "/" + file_corrected, "c")
 
 ; 3. Setup the UNLIMITED dimension in the NEW file to be able to concatonate along time dimension
 filedimdef(f_out, "time", -1, True)
@@ -33,7 +38,7 @@ filedimdef(f_out, "time", -1, True)
 Times = f_in->Times
 time_numeric = wrf_times_c(Times, 0)
 time_numeric@units = "hours since 1984-01-01 00:00:00"
-time_numeric@calendar = "gregorian"
+time_numeric@calendar = "gregorian" ;gridMET is also on gregorian
 time_numeric!0 = "time"
 time_numeric&time = time_numeric
 
@@ -41,13 +46,13 @@ time_numeric&time = time_numeric
 ; -> used to import or export variables via addfiles function
 f_out->time = time_numeric
 
-if (vname .eq. "QVAPOR") then
+if (vname .eq. "Q2") then
 
     ; 6. Pull out the variable of interest
-    qv = f_in->QVAPOR
+    qv = f_in->Q2
 
     ; 7. Calculate specific humidity: q = qv / (1 + qv)
-    ; QVAPOR units are kg kg-1
+    ; Q2 units are kg kg-1
     new_var = qv / (1.0 + qv) 
     copy_VarMeta(qv, new_var)
     new_var@long_name = "Specific Humidity"
@@ -57,6 +62,32 @@ if (vname .eq. "QVAPOR") then
     new_var&time = time_numeric
 
     ; 8. Write to f_out using a dynamic string pointer to new variable name from sbatch script
+    f_out->$vnew$ = new_var
+
+elif (vname .eq. "RAINNC") then
+
+    ; 6. Pull out the current file's cumulative RAINNC
+    rain_curr = f_in->RAINNC
+
+    if (.not. isvar("prev_file_in") .or. prev_file_in .eq. "") then
+        ; Absolute first file in the time series has no prior file
+        new_var = rain_curr 
+    else
+        ; Open the immediately preceding file and compute the unique step difference
+        f_prev = addfile(prev_file_in, "r")
+        rain_prev = f_prev->RAINNC
+        new_var = rain_curr - rain_prev
+    end if
+
+    copy_VarMeta(rain_curr, new_var)
+    new_var@long_name = "Grid-scale Precipitation Interval Step"
+    new_var@units = "mm"
+
+    ; 8. Adjust dimensions for the variable
+    new_var!0 = "time"
+    new_var&time = time_numeric
+
+    ; 8. Write to f_out
     f_out->$vnew$ = new_var
 
 else

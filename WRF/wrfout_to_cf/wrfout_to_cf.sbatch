@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH --account=strong-kp
-#SBATCH --partition=strong-kp
+#SBATCH --account=strong
+#SBATCH --partition=kingspeak
 #SBATCH --job-name=ncl_pull
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
@@ -20,9 +20,12 @@ years=(1985 1986 1987 1988 1989 1990 1991 1992 1993 1994 1995 1996 1997 1998 199
 
 
 # Load in software
-module use /uufs/chpc.utah.edu/common/home/strong-group7/sydney/
 module load miniforge3
+source /uufs/chpc.utah.edu/sys/installdir/r8/miniforge3/25.11.0/etc/profile.d/conda.sh
 conda activate ncl_stable
+
+# Force Linux to look in conda environment's lib/ folder first before default CHPC library versions
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 
 
 # Loop through the datasets
