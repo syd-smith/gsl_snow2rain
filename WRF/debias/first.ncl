@@ -14,6 +14,7 @@ load "$NCARG_ROOT/lib/ncarg/nclscripts/csm/gsn_code.ncl"
 load "$NCARG_ROOT/lib/ncarg/nclscripts/csm/gsn_csm.ncl"
 load "$NCARG_ROOT/lib/ncarg/nclscripts/csm/contributed.ncl"
 load "$NCARG_ROOT/lib/ncarg/nclscripts/wrf/WRFUserARW.ncl"
+load "$NCARG_ROOT/lib/ncarg/nclscripts/wrf/WRF_contributed.ncl"
 
 ; --- Compression Settings ---
 ; Must be set before opening the output file
@@ -21,9 +22,16 @@ setfileoption("nc", "Format", "NetCDF4")
 setfileoption("nc", "CompressionLevel", 5) 
 setfileoption("nc", "Shuffle", 1)
 
-; Ensure the passed-in strings are treated as strings
-vname := tostring(vname)
-vnew  := tostring(vnew)
+; --- Load Environment Variables Passed from Bash ---
+f_path_in   = getenv("f_path_in")
+dir_corrected = getenv("dir_corrected")
+file_corrected = getenv("file_corrected")
+vname       = getenv("vname")
+vnew        = getenv("vnew")
+
+; Check if prev_file_in exists in the environment
+prev_file_in = getenv("prev_file_in")
+has_prev = (prev_file_in .ne. "") .and. (.not. ismissing(prev_file_in))
 
 ; 1. Open input files as read only to not overwrite any original data
 f_in = addfile(f_path_in, "r")
@@ -64,12 +72,12 @@ if (vname .eq. "Q2") then
     ; 8. Write to f_out using a dynamic string pointer to new variable name from sbatch script
     f_out->$vnew$ = new_var
 
-elif (vname .eq. "RAINNC") then
+else if (vname .eq. "RAINNC") then
 
     ; 6. Pull out the current file's cumulative RAINNC
     rain_curr = f_in->RAINNC
 
-    if (.not. isvar("prev_file_in") .or. prev_file_in .eq. "") then
+    if (.not. has_prev) then
         ; Absolute first file in the time series has no prior file
         new_var = rain_curr 
     else
@@ -103,10 +111,6 @@ else
     ; 8. Write to f_out using a dynamic string pointer to new variable name from sbatch script
     ; f_out->$vnew$ tells NCL to name the variable the new name in the file
     f_out->$vnew$ = temp_var
-
+    
 end if
-
-
-
-
-
+end if

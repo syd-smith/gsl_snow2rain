@@ -239,7 +239,7 @@ begin
   fileAtt@DFI_OPT 		= 0
   fileAtt@ISHALLOW 		= 0
   fileAtt@ISFTCFLX 		= 0
-  fileAtt@OMLCALL 		= 0!!!!!!
+  fileAtt@OMLCALL 		= 0
   fileAtt@PREC_ACC_DT 		= "0.f"
   fileAtt@BUCKET_J 		= "-1.f"
   fileAtt@BUCKET_MM 		= "-1.f"
