@@ -93,6 +93,7 @@ def interpo_MET(WRF_file, location, var, year):
     # Define file path and open gridMET data for defined variable
     fpath = f'{location}{var}_{year}.nc'
     MET_ds = xr.open_dataset(fpath)[MET_vars[var]] # use MET_vars dictionary to access the variable by the name it's saved to in xarray
+    time_vals = MET_ds['day']
 
     # Mask gridMET data
     MET_masked = loc_mask(MET_ds, 'gridMET')
@@ -100,23 +101,38 @@ def interpo_MET(WRF_file, location, var, year):
     # Lat values are ordered from max to min and need to be flipped
     MET_masked = MET_masked.isel(lat = slice(None, None, -1))
 
+    # Recognize that dims should be 3D
+    dims_2d = ('south_north', 'east_west')
+
     # Create a blueprint for a new dataset to house the interpolated data
     ds_map = xr.Dataset(
         {
             var: (['time', 'lat', 'lon'], MET_masked.values)
         },
         coords = {
-            'time': (MET_masked['day']),
-            'lat': (('south_north', 'west_east'), lat),
-            'lon': (('south_north', 'west_east'), lon),
+            'time': ('time', time_vals),
+            'lat': (dims_2d, lat),
+            'lon': (dims_2d, lon),
         }
     )
 
     # Make a regridder to apply to gridMET data
     regridder = xe.Regridder(MET_masked, ds_map, method = 'bilinear', extrap_method = 'inverse_dist')
 
-    # House interpolated data in RAM not on disk
-    ds_out = regridder(MET_masked)
+    # House interpolated DataArray in RAM not on disk
+    da_regridded = regridder(MET_masked)
+
+    # Turn DataArray into Dataset
+    ds_out = xr.Dataset(
+        {
+            var: da_regridded.values
+        },
+        coords = {
+            'time': ('time', time_vals),
+            'lat': (dims_2d, lat),
+            'lon': (dims_2d, lon),
+        }
+    )
 
     # Close unnecessary files out of memory
     MET_ds.close()
@@ -125,110 +141,134 @@ def interpo_MET(WRF_file, location, var, year):
 
     return ds_out
 
-def WRF_daily(MET_data, f_list, var):
+def WRF_daily(date, files, var):
     """
     Calculate daily average WRF value for given variable.
     """
 
-    # Grab one day worth of output files
-    for start_idx in range(0, len(f_list), 4):
-        # Create group out of all of the files for that day
-        group = f_list[start_idx : start_idx + 4]
+    # List of files for given date
+    matched_files = [f for f in files if f'wrfout_d03_{date}' in f]
 
-        # Create list to temporarilty store clean files in
-        temp_clean = []
+    # Create output directory to store new cleaned files
+    output_dir = f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/WRF/debias/daily/{var}/'
+    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
-        # Loop through every timestamp in the given day
-        for time_slice in group:
-            # Open timestamp file
-            with xr.open_dataset(time_slice) as ds:
-                # Only pull out 2 meter temperature data
-                var_da = ds[WRF_vars[var]]
-                xtime_vals = ds['XTIME'].values
-                lat_vals = ds['XLAT'].values
-                lon_vals = ds['XLONG'].values
+    # Empty list to fill with daily data
+    temp_clean = []
 
-                # Recognize that dims should be 3D
-                dims_3d = ('XTIME', 'south_north', 'east_west')
+    for file in matched_files:
+        # Open one timestamp file at a time
+        with xr.open_dataset(file) as ds:
+            # Only pull out 2 meter temperature data
+            var_data = ds[WRF_vars[var]]
+            xtime_vals = ds['XTIME'].values
+            lat_vals = ds['XLAT'].isel(XTIME = 0).values
+            lon_vals = ds['XLONG'].isel(XTIME = 0).values
 
-                # Create new dataset to save data to
-                clean_ds = xr.Dataset(
-                    {
-                        var: (dims_3d, var_da.data)
-                    },
-                    coords = {
-                        'XTIME': ('XTIME', xtime_vals),
-                        'XLAT': (dims_3d, lat_vals),
-                        'XLONG': (dims_3d, lon_vals)
-                    }
-                )
-                
-                # Save each timestamp worth of day to predefined list
-                temp_clean.append(clean_ds)
+            # Recognize that dims should be 2D
+            dims_2d = ('south_north', 'east_west')
 
-        # Concatonate four timestamp files into one file
-        combo_clean = xr.concat(temp_clean, dim = 'XTIME')
+            # Create new dataset to save data to
+            clean_ds = xr.Dataset(
+                {
+                    var: (['time', 'lat', 'lon'], var_data.data)
+                },
+                coords = {
+                    'time': ('time', xtime_vals),
+                    'lat': (dims_2d, lat_vals),
+                    'lon': (dims_2d, lon_vals)
+                }
+            )
+            
+            # Save each timestamp worth of day to predefined list
+            temp_clean.append(clean_ds)
+
+    # Concatonate four timestamp files into one file
+    combo_clean = xr.concat(temp_clean, dim = 'time')
+    
+    if var == 'tmmx':
+        # Select daily max along XTIME dim for every gridpoint
+        adj_data = combo_clean[var].max(dim = 'time')
+
+    elif var == 'tmmn':
+        # Select daily min along XTIME dim for every gridpoint
+        adj_data = combo_clean[var].min(dim = 'time')
+
+    elif var == 'pr':
+        # WRF stores precipitation as a continuously increasing staircase - difference first and last stairstep in a day to get true precip value for that day
+        adj_data = combo_clean_ds[var].sel(time = 0) - combo_clean[var].sel(XTIME = 3)
+
+    elif var == 'sph':
+        # Find daily average 
+        daily_avg = combo_cleam[var].mean(dim = 'time')
         
-        if var == 'tmmx':
-            # Select daily max along XTIME dim for every gridpoint
-            daily_data = combo_clean[var].max(dim = 'XTIME')
+        # Convert Q2 to specific humidity
+        adj_data = daily_avg / (1 + daily_avg)
 
-            # Expand time dim back out after it was collapsed
-            daily_data = ds_max.expand_dims('XTIME')
+    else:
+        # Calculate daily average
+        daily_adj = combo_clean[var].mean(dim = 'time')
+    
+    # Expand time dim back out after it was collapsed
+    daily_data = adj_data.expand_dims('time')
 
-        elif var == 'tmmn':
-            # Select daily min along XTIME dim for every gridpoint
-            daily_data = combo_clean[var].min(dim = 'XTIME')
+    # Save daily data to a new dataset
+    daily_ds = xr.Dataset(
+        {
+            var: (['time', 'lat', 'lon'], daily_data.data)
+        },
+        coords = {
+            'time': ('time', xtime_vals),
+            'lat': (dims_2d, lat_vals),
+            'lon': (dims_2d, lon_vals)
+        }
+    )
 
-            # Expand time dims back out after they were collapsed
-            daily_data = ds_min.expand_dims('XTIME')
+    # Save to netcdf
+    out_path = os.path.join(output_dir, f'{var}_{date}.nc')
+    daily_ds.to_netcdf(out_path)
 
-        # Save daily data to a new dataset
-        daily_ds = xr.Dataset(
-            {
-                var: (dims_3d, daily_data.data)
-            },
-            coords = {
-                'XTIME': ('XTIME', xtime_vals),
-                'XLAT': (dims_3d, lat_vals),
-                'XLONG': (dims_3d, lon_vals)
-            }
-        )
+    return daily_ds
 
-        # Save to netcdf
-        output = os.path.join(output_dir_min, f'clean_{var}_{start_idx:07d}.nc')
-        daily_ds.to_netcdf(output)
+
 
 
 
 
 def main():
+    # Set variable based on gridMET variable save names
+    # tmmn, tmmx, pr, sph, srad, vas, uas
+    var = 'pr'
 
+    # Locations for input data
     WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014/'
     MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/'
-    # Run T2 for tmmn and tmmx separately
-    var = 'vas'
 
-    # NEED TO KNOW
-    # 1. input file locations
-    # 2. variables in WRF
-    # 3. variables in gridMET
-    
+    # List of WRF input files
     files = get_fpaths(WRF_in)
     
+    # todo: set to full historical period
     for year in range(1985, 1986):
-        # # Call and interpolate gridMET data for the given year 
-        # MET_data = interpo_MET(files[0], MET_in, var, year)
+        # Call and interpolate gridMET data for the given year 
+        MET_data = interpo_MET(files[0], MET_in, var, year)
+        print(MET_data)
 
-        # Create date range using pandas
-        # todo: ensure the proper dates are inputted
-        dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-01-05', freq = 'D') 
+        # # Create date range using pandas
+        # # todo: set to dates for full year
+        # dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-01-02', freq = 'D') 
 
-        for day in dates:
+        # for day in dates:
+        #     # Turn day in to usable date string 
+        #     day_str = day.strftime('%Y-%m-%d')
 
-            day_str = day.strftime('%Y-%m-%d')
-            matched_files = [f for f in files if f'wrfout_d03_{day_str}' in f]
-            print(matched_files)
+        #     # Create files with daily average WRF data
+        #     test = WRF_daily(day_str, files, var)
+
+        #     MET_select = MET_data.sel(time = day_str)
+        #     print(MET_select)
+
+
+        # MET_data.close()
 
 
         
