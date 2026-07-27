@@ -4,6 +4,8 @@ Date Created: July 24, 2026
 """
 
 import glob
+import numpy as np
+import os
 import pandas as pd
 import xarray as xr
 import xesmf as xe
@@ -42,7 +44,7 @@ def get_fpaths(f_loc):
 
 def loc_mask(ds, dataset_type):
     """
-    Mask given Dataset based on predefined latitude and longitude values. Dataset type must be WRF or gridMET.
+    Mask given dataset based on predefined latitude and longitude values. Dataset type must be WRF or gridMET.
     """
     # Define boundaries for interpolation (exculde locations over the Pacific Ocean)
     lat_min, lat_max = 34.43, 46.57
@@ -94,14 +96,15 @@ def interpo_MET(WRF_file, location, var, year):
     fpath = f'{location}{var}_{year}.nc'
     MET_ds = xr.open_dataset(fpath)[MET_vars[var]] # use MET_vars dictionary to access the variable by the name it's saved to in xarray
     time_vals = MET_ds['day']
+    n_times = len(time_vals)
 
-    # Mask gridMET data
+    # Mask gridMET data to size of study region
     MET_masked = loc_mask(MET_ds, 'gridMET')
 
     # Lat values are ordered from max to min and need to be flipped
     MET_masked = MET_masked.isel(lat = slice(None, None, -1))
 
-    # Recognize that dims should be 3D
+    # Keep lat and lon dims as 2d for regridding process
     dims_2d = ('south_north', 'east_west')
 
     # Create a blueprint for a new dataset to house the interpolated data
@@ -110,7 +113,7 @@ def interpo_MET(WRF_file, location, var, year):
             var: (['time', 'lat', 'lon'], MET_masked.values)
         },
         coords = {
-            'time': ('time', time_vals),
+            'time': ('time', time_vals.data),
             'lat': (dims_2d, lat),
             'lon': (dims_2d, lon),
         }
@@ -122,15 +125,22 @@ def interpo_MET(WRF_file, location, var, year):
     # House interpolated DataArray in RAM not on disk
     da_regridded = regridder(MET_masked)
 
+    # Lat and lon dims really should be 3D to match WRF
+    dims_3d = ('time', 'south_north', 'east_west')
+
+    # Repeat 2D spatial grid across all time steps
+    lat_3d = np.repeat(np.expand_dims(lat, axis = 0), n_times, axis = 0)
+    lon_3d = np.repeat(np.expand_dims(lon, axis = 0), n_times, axis = 0)
+
     # Turn DataArray into Dataset
     ds_out = xr.Dataset(
         {
-            var: da_regridded.values
+            var: (['time', 'lat', 'lon'], da_regridded.values)
         },
         coords = {
-            'time': ('time', time_vals),
-            'lat': (dims_2d, lat),
-            'lon': (dims_2d, lon),
+            'time': ('time', time_vals.data),
+            'lat': (dims_3d, lat_3d),
+            'lon': (dims_3d, lon_3d),
         }
     )
 
@@ -143,15 +153,11 @@ def interpo_MET(WRF_file, location, var, year):
 
 def WRF_daily(date, files, var):
     """
-    Calculate daily average WRF value for given variable.
+    Calculate daily average WRF value for given variable. Daily data is saved as netCDF to output_dir.
     """
 
     # List of files for given date
     matched_files = [f for f in files if f'wrfout_d03_{date}' in f]
-
-    # Create output directory to store new cleaned files
-    output_dir = f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/WRF/debias/daily/{var}/'
-    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
     # Empty list to fill with daily data
     temp_clean = []
@@ -159,14 +165,15 @@ def WRF_daily(date, files, var):
     for file in matched_files:
         # Open one timestamp file at a time
         with xr.open_dataset(file) as ds:
-            # Only pull out 2 meter temperature data
+            
+            # Only pull out data for given variable
             var_data = ds[WRF_vars[var]]
-            xtime_vals = ds['XTIME'].values
-            lat_vals = ds['XLAT'].isel(XTIME = 0).values
-            lon_vals = ds['XLONG'].isel(XTIME = 0).values
+            xtime_vals = var_data['XTIME'].values
+            lat_vals = ds['XLAT'].values
+            lon_vals = ds['XLONG'].values
 
             # Recognize that dims should be 2D
-            dims_2d = ('south_north', 'east_west')
+            dims_3d = ('time', 'south_north', 'east_west')
 
             # Create new dataset to save data to
             clean_ds = xr.Dataset(
@@ -175,8 +182,8 @@ def WRF_daily(date, files, var):
                 },
                 coords = {
                     'time': ('time', xtime_vals),
-                    'lat': (dims_2d, lat_vals),
-                    'lon': (dims_2d, lon_vals)
+                    'lat': (dims_3d, lat_vals),
+                    'lon': (dims_3d, lon_vals)
                 }
             )
             
@@ -185,7 +192,8 @@ def WRF_daily(date, files, var):
 
     # Concatonate four timestamp files into one file
     combo_clean = xr.concat(temp_clean, dim = 'time')
-    
+    # TODO: add check that time dimension only has 4 time stamps
+
     if var == 'tmmx':
         # Select daily max along XTIME dim for every gridpoint
         adj_data = combo_clean[var].max(dim = 'time')
@@ -196,7 +204,7 @@ def WRF_daily(date, files, var):
 
     elif var == 'pr':
         # WRF stores precipitation as a continuously increasing staircase - difference first and last stairstep in a day to get true precip value for that day
-        adj_data = combo_clean_ds[var].sel(time = 0) - combo_clean[var].sel(XTIME = 3)
+        adj_data = combo_clean.isel(time = 0) - combo_clean.isel(time = 3)
 
     elif var == 'sph':
         # Find daily average 
@@ -215,20 +223,105 @@ def WRF_daily(date, files, var):
     # Save daily data to a new dataset
     daily_ds = xr.Dataset(
         {
-            var: (['time', 'lat', 'lon'], daily_data.data)
+            var: (['time', 'lat', 'lon'], daily_data[var].values)
         },
         coords = {
-            'time': ('time', xtime_vals),
-            'lat': (dims_2d, lat_vals),
-            'lon': (dims_2d, lon_vals)
+            'time': ('time', [date]),
+            'lat': (dims_3d, lat_vals),
+            'lon': (dims_3d, lon_vals)
         }
     )
 
+    # Create output directory to store new cleaned files
+    output_dir = f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/WRF/debias/daily/{var}/'
+    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
+
     # Save to netcdf
-    out_path = os.path.join(output_dir, f'{var}_{date}.nc')
+    out_path = os.path.join(output_dir, f'daily_{var}_{date}.nc')
     daily_ds.to_netcdf(out_path)
+    print(f'File saved to: {out_path}')
 
     return daily_ds
+
+def bias_daily(WRF_data, MET_data, date, var):
+    """
+    Calculate the daily bias (WRF - gridMET) and save data to netCDF.
+    """
+    # Calculate bias
+    daily_bias = WRF_data - MET_data
+
+    # Create output directory to store new cleaned files
+    output_dir = f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/WRF/debias/bias/{var}/'
+    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
+
+    # Save to netcdf
+    out_path = os.path.join(output_dir, f'bias_{var}_{date}.nc')
+    daily_bias.to_netcdf(out_path)
+    print(f'File saved to: {out_path}')
+
+    return daily_bias
+
+def climate_avg(var):
+    """
+    Calculate the climatological average (across historical period) bias for a given day.
+    """
+    # Location of bias data from bias_daily
+    bias_data = f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/WRF/debias/bias/{var}/'
+
+    # Create output directory to store new cleaned files
+    output_dir = f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/WRF/debias/climate_avg/{var}/'
+    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
+
+    # TODO: set to correct date range (full year)
+    # Generate normal date range with a dummy year (note 1985 is not a leap year)
+    dates = pd.date_range(start = '1985-01-01', end = '1985-03-01', freq = 'D')
+
+    # Strip out the year and keep only month-day
+    month_days = dates.strftime('%m-%d')
+
+    for day in month_days:
+        list_of_files = sorted(glob.glob(f'{bias_data}bias_{var}_*{day}.nc'))
+        # TODO: create error log if list is empty
+        all_years = xr.open_mfdataset(list_of_files, combine = 'nested', concat_dim = 'time')
+
+        # Take the mean of all years in the historical period
+        climate_avg_of_day = all_years.mean(dim = 'time').load() # computes mean into RAM and detaches it from files
+        print(climate_avg_of_day)
+
+        # Save to netcdf
+        out_path = os.path.join(output_dir, f'climate_avg_{var}_{day}.nc')
+        climate_avg_of_day.to_netcdf(out_path)
+        print(f'File saved to: {out_path}')
+
+        # Close files out of memory
+        all_years.close()
+        climate_avg_of_day.close()
+
+def harmonic_n(t, a0, omega, *coeffs):
+    """
+    a0: offset (mean)
+    omega: base frequency
+    *coeffs: captures any number of coefficients (a1, b1, a2, b2, a3, b3...)
+    """
+    res = a0
+    for i in range(0, len(coeffs), 2):
+        n = (i // 2) + 1
+        res += coeffs[i] * np.cos(n * omega * t) + coeffs[i+1] * np.sin(n * omega * t)
+    return res
+
+# create harmonics directory to put dataset in and keep graphs of what functions are best
+# try using xr.curvefit to wrap harmonic function by location
+second_order_params = ['a0', 'omega', 'a1', 'b1', 'a2', 'b2']
+fit_results = ds.curvefit(
+    coords = 'time', 
+    func = harmonic_n,
+    param_names = second_order_params
+)
+# test what order is the best fit
+# interpolate daily bias based on curve from harmonic function
+# extract bias from daily WRF data and save
+
+
 
 
 
@@ -244,37 +337,41 @@ def main():
     WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014/'
     MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/'
 
-    # List of WRF input files
+    # Generate list of WRF input files
     files = get_fpaths(WRF_in)
     
-    # todo: set to full historical period
-    for year in range(1985, 1986):
+    # TODO: set to full historical period
+    for year in range(1985, 1987):
         # Call and interpolate gridMET data for the given year 
-        MET_data = interpo_MET(files[0], MET_in, var, year)
-        print(MET_data)
+        MET_data = interpo_MET(files[0], MET_in, var, year) # pass first file in files as example grid
 
-        # # Create date range using pandas
-        # # todo: set to dates for full year
-        # dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-01-02', freq = 'D') 
+        # Create date range using pandas
+        # TODO: set to dates for full year
+        dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-03-01', freq = 'D') 
 
-        # for day in dates:
-        #     # Turn day in to usable date string 
-        #     day_str = day.strftime('%Y-%m-%d')
+        for day in dates:
+            # Turn day in to usable date string 
+            day_str = day.strftime('%Y-%m-%d')
 
-        #     # Create files with daily average WRF data
-        #     test = WRF_daily(day_str, files, var)
+            # Create clean file of daily WRF data
+            daily_avg = WRF_daily(day_str, files, var)
 
-        #     MET_select = MET_data.sel(time = day_str)
-        #     print(MET_select)
+            # Select day worth of gridMET data
+            MET_select = MET_data.sel(time = day_str)
 
+            # Find bias for given data
+            bias = bias_daily(daily_avg, MET_select, day_str, var)
 
-        # MET_data.close()
+            # Close daily files out of memory
+            daily_avg.close()
+            bias.close()
 
-
-        
-
+        # Close out of gridMET data once the entire year is complete
+        MET_data.close()
+        print(f'{year} daily bias caclulations complete!')
     
-
+    # Calculate the climatological daily bias
+    clm_avg = climate_avg(var)
 
 
 if __name__ == '__main__':
