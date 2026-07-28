@@ -7,8 +7,24 @@ import glob
 import numpy as np
 import os
 import pandas as pd
+from pathlib import Path
+import scipy
+import sys
 import xarray as xr
 import xesmf as xe
+
+
+# ==================================
+# - Establish Relative File Path - 
+# ==================================
+
+current_dir = Path(__file__).resolve().parent
+parent_dir = current_dir.parent
+sys.path.append(str(current_dir))
+
+# ===========================
+# ---- Global Variables ----
+# ===========================
 
 # Dictionary that calls name of WRF variable based on the given gridMET variable
 WRF_vars = {
@@ -32,6 +48,9 @@ MET_vars = {
     "uas": "uas",
 }
 
+# =====================
+# ---- Functions ----
+# =====================
 
 def get_fpaths(f_loc):
     """
@@ -42,13 +61,11 @@ def get_fpaths(f_loc):
 
     return files
 
-def loc_mask(ds, dataset_type):
+def loc_mask(ds, dataset_type, lat_min = 34.43, lat_max = 46.57, lon_min = -117.74, lon_max = -100.57):
     """
-    Mask given dataset based on predefined latitude and longitude values. Dataset type must be WRF or gridMET.
+    Mask given dataset based on predefined latitude and longitude values. Dataset type must be WRF, gridMET, or other.
+    Default coordinates are for gridMET interpolation (exculdes locations over the Pacific Ocean).
     """
-    # Define boundaries for interpolation (exculde locations over the Pacific Ocean)
-    lat_min, lat_max = 34.43, 46.57
-    lon_min, lon_max = -117.74, -100.57
 
     if dataset_type == 'WRF':
         # Select gridpoints only within the given spatial boundaries
@@ -58,7 +75,7 @@ def loc_mask(ds, dataset_type):
         )
 
         # Apply mask to ds
-        ds_masked = ds.where(mask, drop=True)
+        ds_masked = ds.where(mask, drop = True)
 
     elif dataset_type == 'gridMET':
         # Select gridpoints only within the given spatial boundaries
@@ -66,6 +83,16 @@ def loc_mask(ds, dataset_type):
             lat = slice(lat_max, lat_min), 
             lon = slice(lon_min, lon_max)
         )
+    
+    elif dataset_type == 'other':
+        # Select gridpoints only within the given spatial boundaries
+        mask = (
+            (ds['lat'] >= lat_min) & (ds['lat'] <= lat_max) &
+            (ds['lon'] >= lon_min) & (ds['lon'] <= lon_max)
+        )
+
+        # Apply mask to ds
+        ds_masked = ds.where(mask, drop = True)
 
     else:
         # todo: log error here
@@ -149,6 +176,7 @@ def interpo_MET(WRF_file, location, var, year):
     ds_map.close()
     MET_masked.close()
 
+    # TODO: make sure we're not losing anything on the edges that takes off the GSL region
     return ds_out
 
 def WRF_daily(date, files, var):
@@ -198,13 +226,21 @@ def WRF_daily(date, files, var):
         # Select daily max along XTIME dim for every gridpoint
         adj_data = combo_clean[var].max(dim = 'time')
 
+        # Expand time dim back out after it was collapsed
+        daily_data = adj_data.expand_dims('time')
+
     elif var == 'tmmn':
         # Select daily min along XTIME dim for every gridpoint
         adj_data = combo_clean[var].min(dim = 'time')
+        # TODO: check if this is most efficient way because it seems to be slower
+
+        # Expand time dim back out after it was collapsed
+        daily_data = adj_data.expand_dims('time')
 
     elif var == 'pr':
         # WRF stores precipitation as a continuously increasing staircase - difference first and last stairstep in a day to get true precip value for that day
-        adj_data = combo_clean.isel(time = 0) - combo_clean.isel(time = 3)
+        adj_data= combo_clean.isel(time = 0) - combo_clean.isel(time = 3)
+        daily_data = adj_data[var].expand_dims('time')
 
     elif var == 'sph':
         # Find daily average 
@@ -213,17 +249,22 @@ def WRF_daily(date, files, var):
         # Convert Q2 to specific humidity
         adj_data = daily_avg / (1 + daily_avg)
 
+        # Expand time dim back out after it was collapsed
+        daily_data = adj_data.expand_dims('time')
+
     else:
         # Calculate daily average
         daily_adj = combo_clean[var].mean(dim = 'time')
+
+        # Expand time dim back out after it was collapsed
+        daily_data = adj_data.expand_dims('time')
     
-    # Expand time dim back out after it was collapsed
-    daily_data = adj_data.expand_dims('time')
+    # TODO: ensure daily_data is array not dataset
 
     # Save daily data to a new dataset
     daily_ds = xr.Dataset(
         {
-            var: (['time', 'lat', 'lon'], daily_data[var].values)
+            var: (['time', 'lat', 'lon'], daily_data.values)
         },
         coords = {
             'time': ('time', [date]),
@@ -232,8 +273,9 @@ def WRF_daily(date, files, var):
         }
     )
 
+    # TODO: make relative path
     # Create output directory to store new cleaned files
-    output_dir = f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/WRF/debias/daily/{var}/'
+    output_dir = current_dir / 'daily' / var 
     os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
     # Save to netcdf
@@ -248,10 +290,14 @@ def bias_daily(WRF_data, MET_data, date, var):
     Calculate the daily bias (WRF - gridMET) and save data to netCDF.
     """
     # Calculate bias
-    daily_bias = WRF_data - MET_data
+    if var == 'pr':
+        daily_bias = WRF_data / MET_data
+    else:
+        daily_bias = WRF_data - MET_data
 
+    # TODO: make relative path
     # Create output directory to store new cleaned files
-    output_dir = f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/WRF/debias/bias/{var}/'
+    output_dir = current_dir / 'bias' / var
     os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
     # Save to netcdf
@@ -265,11 +311,12 @@ def climate_avg(var):
     """
     Calculate the climatological average (across historical period) bias for a given day.
     """
+    # TODO: make relative path
     # Location of bias data from bias_daily
-    bias_data = f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/WRF/debias/bias/{var}/'
+    bias_data = current_dir / 'bias' / var
 
     # Create output directory to store new cleaned files
-    output_dir = f'/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/WRF/debias/climate_avg/{var}/'
+    output_dir = current_dir / 'climate_avg' / var
     os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
     # TODO: set to correct date range (full year)
@@ -280,63 +327,163 @@ def climate_avg(var):
     month_days = dates.strftime('%m-%d')
 
     for day in month_days:
-        list_of_files = sorted(glob.glob(f'{bias_data}bias_{var}_*{day}.nc'))
+        list_of_files = sorted(glob.glob(f'{bias_data}/bias_{var}_*{day}.nc'))
         # TODO: create error log if list is empty
         all_years = xr.open_mfdataset(list_of_files, combine = 'nested', concat_dim = 'time')
 
         # Take the mean of all years in the historical period
         climate_avg_of_day = all_years.mean(dim = 'time').load() # computes mean into RAM and detaches it from files
-        print(climate_avg_of_day)
+        # print(climate_avg_of_day)
+
+        # Mannual add back time dimension (1985 is just a placeholder year)
+        date_add_back = climate_avg_of_day.assign_coords(time = pd.to_datetime(f'1985-{day}'))
+        # print(date_add_back)
+        # print(date_add_back['time'].values)
+
+        # Reconstruct proper lat and lon dimensions
+        lat_2d = all_years['lat'].isel(time = 0)
+        lon_2d = all_years['lon'].isel(time = 0)
+        date_add_back['lat'] = lat_2d
+        date_add_back['lon'] = lon_2d   
 
         # Save to netcdf
         out_path = os.path.join(output_dir, f'climate_avg_{var}_{day}.nc')
-        climate_avg_of_day.to_netcdf(out_path)
+        date_add_back.to_netcdf(out_path)
         print(f'File saved to: {out_path}')
 
         # Close files out of memory
         all_years.close()
         climate_avg_of_day.close()
+        date_add_back.close()
 
-def harmonic_n(t, a0, omega, *coeffs):
+def harmonic_n(t, a0, *coeffs):
     """
-    a0: offset (mean)
-    omega: base frequency
-    *coeffs: captures any number of coefficients (a1, b1, a2, b2, a3, b3...)
+    Harmonic function custom to given order (based on number of coefficents passed in *coeffs). 
+    This function is used like a calculator for scipy (via curvefit) to find the curve that is
+    matches the noisy data the best. 
     """
+    # *coeffs: captures any number of coefficients (a1, b1, a2, b2, a3, b3...)
+    # omega: fundamental frequency of the entire dataset window (a year worth of daily data)
+    omega = (2*np.pi)/365
+    # TODO: 
+    # TODO: error if t isnt measured in days because then theres a mismatch with omega
+
     res = a0
     for i in range(0, len(coeffs), 2):
         n = (i // 2) + 1
         res += coeffs[i] * np.cos(n * omega * t) + coeffs[i+1] * np.sin(n * omega * t)
     return res
 
+    # TODO: check what time values are set to in the dataset (should be numerical offset relative to start date of the dataset)
+
+def order_coeffs(order):
+    """
+    Define the coefficients that should be used for the given order of harmonic function. Value passed for order must be an integer. 
+    """
+
+    # Create list to store values in (all lists should start with the initial guess)
+    coeffs = ['a0']
+
+    # Loop through coefficients to add correct number based on predefined order
+    for step in range(1, order+1):
+        coeffs.append(f'a{step}')
+        coeffs.append(f'b{step}')
+    # TODO: add to log
+    # print(coeffs)
+
+    return coeffs
+
+def apply_harmonic(var, order):
+    """
+    Apply custom harmonic function to noisy data. Value passed for order must be an integer. 
+    """
+    # Load entire year worth of climatological daily bias
+    climate_dir = current_dir / 'climate_avg' / var
+    climate_files = sorted(glob.glob(f'{climate_dir}/climate_avg_{var}*.nc'))
+    climate_data = xr.open_mfdataset(climate_files, combine = 'nested', concat_dim = 'time').load()
+
+    # Define coefficents for given order of harmonic function
+    order_params = order_coeffs(order)
+
+    # Create dict of initial guesses
+    initial_guesses = {'a0': climate_data[var].mean('time')}
+
+    # Set inital guess of coeffs to 0 to prevent convergence failures
+    for param in order_params:
+        if param != 'a0':
+            initial_guesses[param] = 0
+
+    # Apply harmonic function to entire xarray.Dataset (unique function for each location)
+    fit_results = climate_data.curvefit(
+        coords = 'time', # tells harmonic_n to use 'time' for t
+        func = harmonic_n,
+        param_names = order_params,
+        # a0: offset or essentially what the mean of the data is (inital guess)
+        p0 = initial_guesses,
+        errors = 'ignore' # sets errors to NAN instead of breaking the script
+    )
+
+    dim_mapping = {}
+    if 'lat' in fit_results.dims:
+        dim_mapping['lat'] = 'south_north'
+    if 'lon' in fit_results.dims:
+        dim_mapping['lon'] = 'east_west'
+        
+    if dim_mapping:
+        fit_results = fit_results.rename_dims(dim_mapping)
+
+    # 2. Extract clean 2D lat and lon grids and assign them as coordinates mapped to south_north/east_west
+    lat_2d = climate_data['lat'].isel(time = 0, drop = True) if 'time' in climate_data['lat'].dims else climate_data['lat']
+    lon_2d = climate_data['lon'].isel(time = 0, drop = True) if 'time' in climate_data['lon'].dims else climate_data['lon']
+
+    fit_results = fit_results.assign_coords({
+        'lat': (('south_north', 'east_west'), lat_2d.values),
+        'lon': (('south_north', 'east_west'), lon_2d.values)
+    })
+
+    # Create output directory to store harmonics data
+    output_dir = current_dir / 'harmonics'
+    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
+    
+    # Save data to netCDF
+    out_path = os.path.join(output_dir, f'harmonic{order}_{var}.nc')
+    fit_results.to_netcdf(out_path)
+    print(f'File saved to: {out_path}')
+
+    fit_results.close()
+
+def order_call(ds, order, var):
+    """
+    Unpacks necessary coefficients from curvefit dataset.
+    """
+    # Access offset coeff (in every dataset)
+    a0 = ds[f'{var}_curvefit_coefficients'].sel(param = 'a0').values.item()
+    
+    # Create list to store coeffs in
+    coeff = [a0]
+
+    # Loop through however many coeff are in that order of harmonic function
+    for i in range(1, order+1):
+        coeff.append(ds[f'{var}_curvefit_coefficients'].sel(param = f'a{i}').values.item())
+        coeff.append(ds[f'{var}_curvefit_coefficients'].sel(param = f'b{i}').values.item())
+
+    return coeff
+
+# TODO: pr doesnt like curve fit because it has a bunch of nans and inf (maybe from calculating ratio rather than difference for bias)
 # create harmonics directory to put dataset in and keep graphs of what functions are best
 # try using xr.curvefit to wrap harmonic function by location
-second_order_params = ['a0', 'omega', 'a1', 'b1', 'a2', 'b2']
-fit_results = ds.curvefit(
-    coords = 'time', 
-    func = harmonic_n,
-    param_names = second_order_params
-)
 # test what order is the best fit
 # interpolate daily bias based on curve from harmonic function
 # extract bias from daily WRF data and save
+# TODO: make sure that harmonic function 
 
 
 
 
 
-
-
-
-def main():
-    # Set variable based on gridMET variable save names
-    # tmmn, tmmx, pr, sph, srad, vas, uas
-    var = 'pr'
-
-    # Locations for input data
-    WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014/'
-    MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/'
-
+def main(var, WRF_in, MET_in):
+    
+    # TODO: log errors if the workflow isn't completed sequentially
     # Generate list of WRF input files
     files = get_fpaths(WRF_in)
     
@@ -371,9 +518,29 @@ def main():
         print(f'{year} daily bias caclulations complete!')
     
     # Calculate the climatological daily bias
-    clm_avg = climate_avg(var)
+    climate_avg(var)
 
+    # Calculate fourier coefficients using custom harmonic function
+    # Outputs saved the harmonics directory
+    for order in range(1, 4):
+        apply_harmonic(var, order)
+
+    # Pass coefficients back into custom harmonic function to get smoothed data
+
+
+# ======================
+# ---- Entry Point ----
+# ======================
+
+# TODO: explain entry point and what variables need to be defined
+# Set variable based on gridMET variable save names
+# tmmn, tmmx, pr, sph, srad, vas, uas
+# TODO: check for edge cases with other variables 
 
 if __name__ == '__main__':
-    main()
+    main(
+        var = 'tmmn',
+        WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014/', 
+        MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/'
+        )
 
