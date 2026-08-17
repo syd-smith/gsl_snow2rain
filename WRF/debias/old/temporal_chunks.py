@@ -6,6 +6,7 @@ Date Created: July 24, 2026
 from contextlib import contextmanager
 from datetime import datetime
 import glob
+
 from loguru import logger
 import netCDF4
 import numpy as np
@@ -56,24 +57,35 @@ logger.debug(f'Log files saved to {log_path}')
 
 # Dictionary that calls name of WRF variable based on the given gridMET variable
 WRF_vars = {
-    "tmmn": "T2",
-    "tmmx": "T2",
-    "pr": "RAINNC",
-    "sph": "Q2",
-    "srad": "SWDOWN",
-    "vas": "V10",
-    "uas": "U10",
+    'tmmn': 'T2',
+    'tmmx': 'T2',
+    'pr': 'RAINNC',
+    'sph': 'Q2',
+    'srad': 'SWDOWN',
+    'vas': 'V10',
+    'uas': 'U10',
 }
 
 # Dictionary that calls name of variable that gridMET data is saved to within the xarray Dataset based on the variable name the file is saved to
 MET_vars = {
-    "tmmn": "air_temperature",
-    "tmmx": "air_temperature",
-    "pr": "precipitation_amount",
-    "sph": "specific_humidity",
-    "srad": "surface_downwelling_shortwave_flux_in_air",
-    "vas": "vas",
-    "uas": "uas",
+    'tmmn': 'air_temperature',
+    'tmmx': 'air_temperature',
+    'pr': 'precipitation_amount',
+    'sph': 'specific_humidity',
+    'srad': 'surface_downwelling_shortwave_flux_in_air',
+    'vas': 'vas',
+    'uas': 'uas',
+}
+
+# Dictionary that calls name of WRF variable based on the given gridMET variable
+bias_vars = {
+    'tmmn': 'tasmin',
+    'tmmx': 'tasmax',
+    'pr': 'RAINNC',
+    'sph': 'Q2',
+    'srad': 'rsds',
+    'vas': 'V10',
+    'uas': 'U10',
 }
 
 # =====================
@@ -396,7 +408,7 @@ def WRF_daily(date, files, var, domain):
 
     elif var == 'pr':
         # WRF stores precipitation as a continuously increasing staircase - difference first and last stairstep in a day to get true precip value for that day
-        adj_data= combo_clean.isel(time = 3) - combo_clean.isel(time = 0)
+        adj_data= combo_clean.isel(time = -1) - combo_clean.isel(time = 0) # -1 grabs last index regardless of how many timestamps there are
         daily_data = adj_data[var].expand_dims('time')
 
         # Verify that precipitation values only are positive
@@ -453,7 +465,7 @@ def bias_daily(WRF_data, MET_data, date, var):
     """
     # Calculate bias
     if var == 'pr':
-        daily_bias = WRF_data / MET_data
+        daily_bias = (WRF_data + 0.1) / (MET_data + 0.1)
 
         #artificially build out pr ratios
         #if both values below 0.1 the set ratio to 1 (no change)
@@ -520,174 +532,49 @@ def climate_avg(var):
         climate_avg_of_day.close()
         date_add_back.close()
 
-def harmonic_n(t, a0, *coeffs):
-    """
-    Harmonic function custom to given order (based on number of coefficents passed in *coeffs). 
-    This function is used like a calculator for scipy (via curvefit) to find the curve that is
-    matches the noisy data the best. 
-    """
-    # *coeffs: captures any number of coefficients (a1, b1, a2, b2, a3, b3...)
-    # omega: fundamental frequency of the entire dataset window (a year worth of daily data)
-    omega = (2*np.pi)/365
-    # TODO: 
-    # TODO: error if t isnt measured in days because then theres a mismatch with omega
-
-    res = a0
-    for i in range(0, len(coeffs), 2):
-        n = (i // 2) + 1
-        res += coeffs[i] * np.cos(n * omega * t) + coeffs[i+1] * np.sin(n * omega * t)
-    return res
-
-    # TODO: check what time values are set to in the dataset (should be numerical offset relative to start date of the dataset)
-
-def order_coeffs(order):
-    """
-    Define the coefficients that should be used for the given order of harmonic function. Value passed for order must be an integer. 
-    """
-
-    # Create list to store values in (all lists should start with the initial guess)
-    coeffs = ['a0']
-
-    # Loop through coefficients to add correct number based on predefined order
-    for step in range(1, order+1):
-        coeffs.append(f'a{step}')
-        coeffs.append(f'b{step}')
-    # TODO: add to log
-    # print(coeffs)
-
-    return coeffs
-
-def apply_harmonic(var, order):
-    """
-    Apply custom harmonic function to noisy data. Value passed for order must be an integer. 
-    """
-    # Load entire year worth of climatological daily bias
-    climate_dir = current_dir / 'climate_avg' / var
-    climate_files = sorted(glob.glob(f'{climate_dir}/climate_avg_{var}*.nc'))
-    climate_data = xr.open_mfdataset(climate_files, combine = 'nested', concat_dim = 'time').load()
-
-    # Define coefficents for given order of harmonic function
-    order_params = order_coeffs(order)
-
-    # Create dict of initial guesses
-    initial_guesses = {'a0': climate_data[var].mean('time')}
-
-    # Set inital guess of coeffs to 0 to prevent convergence failures
-    for param in order_params:
-        if param != 'a0':
-            initial_guesses[param] = 0
-
-    # Apply harmonic function to entire xarray.Dataset (unique function for each location)
-    fit_results = climate_data.curvefit(
-        coords = 'time', # tells harmonic_n to use 'time' for t
-        func = harmonic_n,
-        param_names = order_params,
-        # a0: offset or essentially what the mean of the data is (inital guess)
-        p0 = initial_guesses,
-        errors = 'ignore' # sets errors to NAN instead of breaking the script
-    )
-
-    dim_mapping = {}
-    if 'lat' in fit_results.dims:
-        dim_mapping['lat'] = 'south_north'
-    if 'lon' in fit_results.dims:
-        dim_mapping['lon'] = 'east_west'
-        
-    if dim_mapping:
-        fit_results = fit_results.rename_dims(dim_mapping)
-
-    # 2. Extract clean 2D lat and lon grids and assign them as coordinates mapped to south_north/east_west
-    lat_2d = climate_data['lat'].isel(time = 0, drop = True) if 'time' in climate_data['lat'].dims else climate_data['lat']
-    lon_2d = climate_data['lon'].isel(time = 0, drop = True) if 'time' in climate_data['lon'].dims else climate_data['lon']
-
-    fit_results = fit_results.assign_coords({
-        'lat': (('south_north', 'east_west'), lat_2d.values),
-        'lon': (('south_north', 'east_west'), lon_2d.values)
-    })
-
-    # Create output directory to store harmonics data
-    output_dir = current_dir / 'harmonics'
-    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
-    
-    # Save data to netCDF
-    out_path = os.path.join(output_dir, f'harmonic{order}_{var}.nc')
-    fit_results.to_netcdf(out_path)
-    print(f'File saved to: {out_path}')
-
-    fit_results.close()
-
-def order_call(ds, order, var):
-    """
-    Unpacks necessary coefficients from curvefit dataset.
-    """
-    # Access offset coeff (in every dataset)
-    a0 = ds[f'{var}_curvefit_coefficients'].sel(param = 'a0').values.item()
-    
-    # Create list to store coeffs in
-    coeff = [a0]
-
-    # Loop through however many coeff are in that order of harmonic function
-    for i in range(1, order+1):
-        coeff.append(ds[f'{var}_curvefit_coefficients'].sel(param = f'a{i}').values.item())
-        coeff.append(ds[f'{var}_curvefit_coefficients'].sel(param = f'b{i}').values.item())
-
-    return coeff
-
-
-
-# TODO: pr doesnt like curve fit because it has a bunch of nans and inf (maybe from calculating ratio rather than difference for bias)
-# create harmonics directory to put dataset in and keep graphs of what functions are best
-# try using xr.curvefit to wrap harmonic function by location
-# test what order is the best fit
-# interpolate daily bias based on curve from harmonic function
-# extract bias from daily WRF data and save
-# TODO: make sure that harmonic function 
-
-
-
 # Catch silent errors and report to log file
 @logger.catch 
 def main(var, domain, WRF_in, MET_in):
     # State what variable is being used
     logger.info(f'Debiasing for {var}.')
 
-    # TODO: log errors if the workflow isn't completed sequentially
-    # Generate list of WRF input files
-    files = get_fpaths(WRF_in, domain)
+    # # TODO: log errors if the workflow isn't completed sequentially
+    # # Generate list of WRF input files
+    # files = get_fpaths(WRF_in, domain)
     
-    # TODO: set to full historical period
-    for year in range(1985, 2015):
-        # Call and interpolate gridMET data for the given year 
-        MET_data = interpo_MET(files[0], MET_in, var, year) # pass first file in files as example grid
+    # # TODO: set to full historical period
+    # for year in range(1985, 2015):
+    #     # Call and interpolate gridMET data for the given year 
+    #     MET_data = interpo_MET(files[0], MET_in, var, year) # pass first file in files as example grid
 
-        # Create date range using pandas
-        # TODO: set to dates for full year
-        dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
+    #     # Create date range using pandas
+    #     # TODO: set to dates for full year
+    #     dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
 
-        for day in dates:
-            # Turn day in to usable date string 
-            day_str = day.strftime('%Y-%m-%d')
+    #     for day in dates:
+    #         # Turn day in to usable date string 
+    #         day_str = day.strftime('%Y-%m-%d')
 
-            # Create clean file of daily WRF data
-            daily_avg = WRF_daily(day_str, files, var, domain)
+    #         # Create clean file of daily WRF data
+    #         daily_avg = WRF_daily(day_str, files, var, domain)
 
-            # Select day worth of gridMET data
-            MET_select = MET_data.sel(time = day_str)
+    #         # Select day worth of gridMET data
+    #         MET_select = MET_data.sel(time = day_str)
 
-            # Find bias for given data
-            bias = bias_daily(daily_avg, MET_select, day_str, var)
+    #         # Find bias for given data
+    #         bias = bias_daily(daily_avg, MET_select, day_str, var)
 
-            # Close daily files out of memory
-            daily_avg.close()
-            bias.close()
+    #         # Close daily files out of memory
+    #         daily_avg.close()
+    #         bias.close()
 
-        # Close out of gridMET data once the entire year is complete
-        MET_data.close()
-        logger.success(f'{year} daily bias caclulations complete!')
+    #     # Close out of gridMET data once the entire year is complete
+    #     MET_data.close()
+    #     logger.success(f'{year} daily bias caclulations complete!')
     
     # Calculate the climatological daily bias
-    climate_avg(var)
-    logger.success('Climatological averages complete!')
+    # climate_avg(var)
+    # logger.success('Climatological averages complete!')
 
     # # Calculate fourier coefficients using custom harmonic function (multiple linear regression)
     # # Outputs saved the harmonics directory
@@ -701,10 +588,8 @@ def main(var, domain, WRF_in, MET_in):
 # ---- Entry Point ----
 # ======================
 
-# TODO: explain entry point and what variables need to be defined
 # Set variable based on gridMET variable save names
 # tmmn, tmmx, pr, sph, srad, vas, uas
-# TODO: check for edge cases with other variables 
 
 if __name__ == '__main__':
     # Track program time in log files
@@ -713,7 +598,7 @@ if __name__ == '__main__':
 
     # Only inputs required
     main(
-        var = 'tmmx',
+        var = 'uas',
         domain = '03',
         WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014/', 
         MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/'
