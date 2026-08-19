@@ -86,8 +86,30 @@ bias_vars = {
 # ---- Functions ----
 # =====================
 
-def debias(var):
+def save_MET(data, var, year):
+    """
+    Save gridMET data to a netcdf file.
+    """
+    # Create output directory to store new cleaned files
+    output_dir = current_dir / 'gridMET' / var
+    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
+    # Save to netcdf
+    out_path = os.path.join(output_dir, f'gridMET_{var}_{year}.nc')
+    data.to_netcdf(out_path)
+    logger.success(f'File saved to: {out_path}')
+
+    # Close out of gridMET data once the entire year is complete
+    data.close()
+    logger.success(f'{year} daily caclulations complete!')
+
+def apply_debiaser(var, obs, hist):
+    """
+    Debias WRF data using ECDFM method from ibicus. Parameters are set to match quantile mapping
+    debiasing used in the MACA downscaling process (GSLBIP). See documentation for more information 
+    on the code libaray used.
+    https://ibicus.readthedocs.io/en/latest/reference/debias.html#ibicus.debias.ECDFM
+    """
     if var == 'pr':
         debiaser = ECDFM.for_precipitation(
             model_type = 'hurdle',  # or 'hurdle' depending on how it handles the binary split
@@ -107,20 +129,53 @@ def debias(var):
             running_window_step_length = 1
         )
 
-    var = 'pr'
+    # Apply debiaser to data and log success
+    debiased_data = debiaser.apply(obs, hist, fut)
+    logger.succes('Quantile mapping debiaser applied to data.')
+
+    return debiased_data
+
+def debiaser_setup(var): 
+    """
+    Setup debiaser using xr.apply_ufunc to process each location along a timeseries. This 
+    requires lazy loading all of the data first before applying the debiaser.
+    """
     # Define paths for observation and model data
     obs_path = current_dir / 'gridMET' / var
-    print(obs_path)
     model_path = current_dir / 'daily' / var
-    print(model_path)
 
-    # Open datasets lazily using dask chunks
-    obs = xr.open_mfdataset(glob.glob(str(obs_path / '*')), chunks = {'lat': 10, 'lon': 10})
-    print(obs)
-    # hist = xr.open_mfdataset(model_path, chunks = {'lat': 10, 'lon': 10})
-    # future_ds = xr.open_dataset("cm_future_precipitation.nc", chunks = {'lat': 10, 'lon': 10})
+    # Open datasets lazily to not overload memory
+    obs = xr.open_mfdataset(glob.glob(str(obs_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('1985-01-01', '2001-12-31'))
+    hist = xr.open_mfdataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('1985-01-01', '2014-12-31'))
+    future_ds = xr.open_dataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('2015-01-01', '2099-12-31'))
 
+    # Apply debiaser at all locations using apply_ufunc
+    result = xr.apply_ufunc(
+        apply_debiaser, # Function being called
+        obs_ds[var], hist_ds[var], fut_ds[var], # Passing function arguements
+        input_core_dims = [['time'], ['time'], ['time']], # Treat time as the 1D loop unit
+        output_core_dims = [['time']],                   
+        vectorize = True,                                # Automatically loops over lat/lon
+        dask = 'parallelized',                           # Parallelize over chunks
+        output_dtypes = [obs_ds['tmmn'].dtype]           # Ensure output matches input type
+        )
 
+    # TODO: assert and log - result are proper shape
+
+    # Create output directory to store debiased data
+    output_dir = current_dir / 'debiased'
+    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
+
+    # Save to netcdf
+    out_path = os.path.join(output_dir, f'debised_{var}.nc')
+    result.to_netcdf(out_path)
+    logger.success(f'File saved to: {out_path}')
+
+    # Close data out of memory
+    result.close()
+    logger.success(f'Bias caclulations complete!')
+
+    return result
 
 # Catch silent errors and report to log file
 @logger.catch 
@@ -128,14 +183,17 @@ def main(var, domain, WRF_in, MET_in):
     # State what variable is being used
     logger.info(f'Debiasing for {var}.')
 
-     # TODO: log errors if the workflow isn't completed sequentially
+    # TODO: log errors if the workflow isn't completed sequentially
     # Generate list of WRF input files
     files = get_fpaths(WRF_in, domain)
     
     # TODO: set to full historical period
-    for year in range(1985, 2015):
+    for year in range(1985, 2099):
         # Call and interpolate gridMET data for the given year 
-        MET_data = interpo_MET(files[0], MET_in, var, year) # pass first file in files as example grid
+        MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
+
+        # Save year of interpolated gridMET data
+        save_data = save_MET(MET_data, var, year)
 
         # Create date range using pandas
         # TODO: set to dates for full year
@@ -148,25 +206,8 @@ def main(var, domain, WRF_in, MET_in):
             # Create clean file of daily WRF data
             daily_avg = WRF_daily(day_str, files, var, domain)
 
-            # Close daily files out of memory
-            daily_avg.close()
-
-        # Create output directory to store new cleaned files
-        output_dir = current_dir / 'gridMET' / var
-        os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
-
-        # Save to netcdf
-        out_path = os.path.join(output_dir, f'gridMET_{var}_{year}.nc')
-        MET_data.to_netcdf(out_path)
-        logger.success(f'File saved to: {out_path}')
-
-        # Close out of gridMET data once the entire year is complete
-        MET_data.close()
-        logger.success(f'{year} daily caclulations complete!')
-    
-    test = debias(var)
-    
-
+    # Apply debiaser to data
+    debiased_data = debiaser_setup(var)
 
 # ======================
 # ---- Entry Point ----
@@ -191,5 +232,9 @@ if __name__ == '__main__':
         )
 
     # Report of runtime at completion 
+    logger.success(f'Debiasing process completed for {var}!')
     logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
+
+    # Force script to stop running once code is finished
+    sys.exit(0)
 

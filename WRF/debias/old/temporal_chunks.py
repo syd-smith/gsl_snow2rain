@@ -457,6 +457,9 @@ def WRF_daily(date, files, var, domain):
     daily_ds.to_netcdf(out_path)
     logger.success(f'File saved to: {out_path}')
 
+    # Close daily files out of memory
+    daily_ds.close()
+
     return daily_ds
 
 def bias_daily(WRF_data, MET_data, date, var):
@@ -565,7 +568,6 @@ def main(var, domain, WRF_in, MET_in):
     #         bias = bias_daily(daily_avg, MET_select, day_str, var)
 
     #         # Close daily files out of memory
-    #         daily_avg.close()
     #         bias.close()
 
     #     # Close out of gridMET data once the entire year is complete
