@@ -21,17 +21,18 @@ import zarr
 current_dir = Path(__file__).resolve().parent
 sys.path.append(str(current_dir))
 
-from old.temporal_chunks import loc_mask
+from temporal_chunks import loc_mask
 
 var = 'tmmn'
 # Define paths for observation and model data
-obs_path = current_dir / 'gridMET' / var
-model_path = current_dir / 'daily' / var
-
+obs_path = current_dir.parent / 'gridMET' / var
 
 # Open datasets lazily using dask chunks
 obs = xr.open_mfdataset(glob.glob(str(obs_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('1985-01-01', '2001-12-31'))
 print(obs)
+
+
+# %%
 print(obs.tmmn.data)
 hist = xr.open_mfdataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('1985-01-01', '2014-12-31'))
 future_ds = xr.open_dataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('2015-01-01', '2099-12-31'))

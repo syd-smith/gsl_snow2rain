@@ -96,8 +96,13 @@ def get_fpaths(f_loc, domain):
     """
     Input path to directory that contains WRF data. Outputs a sorted list of file names.
     """
-    # Create list to store file names in
-    files = sorted(glob.glob(f'{f_loc}/wrfout_d{domain}*'))
+
+    # Convert f_loc to a Path object for clean path joining
+    input_dir = Path(f_loc)
+    
+    # Use recursive glob '**' to search inside all subdirectories for files matching the pattern
+    search_pattern = str(input_dir / '**' / f'wrfout_d{domain}*')
+    files = sorted(glob.glob(search_pattern, recursive = True))
 
     # Check if the list is empty (meaning no files matched the domain pattern)
     if not files:
@@ -169,7 +174,7 @@ def interpo_MET(WRF_file, location, var, year):
     fpath = f'{location}{var}_{year}.nc'
     MET_ds = xr.open_dataset(fpath)[MET_vars[var]] # use MET_vars dictionary to access the variable by the name it's saved to in xarray
     logger.debug(f'gridMET variable in use: {MET_vars[var]}')
-    time_vals = MET_ds['day']
+    time_vals = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
     n_times = len(time_vals)
 
     # Mask gridMET data to size of study region
@@ -191,7 +196,7 @@ def interpo_MET(WRF_file, location, var, year):
             var: (['time', 'lat', 'lon'], MET_masked.values)
         },
         coords = {
-            'time': ('time', time_vals.data),
+            'time': ('time', time_vals),
             'lat': (dims_2d, lat),
             'lon': (dims_2d, lon),
         }
@@ -216,7 +221,7 @@ def interpo_MET(WRF_file, location, var, year):
             var: (['time', 'lat', 'lon'], da_regridded.values)
         },
         coords = {
-            'time': ('time', time_vals.data),
+            'time': ('time', time_vals),
             'lat': (dims_3d, lat_3d),
             'lon': (dims_3d, lon_3d),
         }
@@ -340,7 +345,7 @@ def open_or_skip(fpath, var):
         raise FileNotFoundError(f'Corrupted file: {fpath}')
         # If you want you can call repair function here instead
 
-def WRF_daily(date, files, var, domain):
+def WRF_daily(date, files, var, domain, current_dir):
     """
     Calculate daily average WRF value for given variable. Daily data is saved as netCDF to output_dir.
     """
@@ -559,7 +564,7 @@ def main(var, domain, WRF_in, MET_in):
     #         day_str = day.strftime('%Y-%m-%d')
 
     #         # Create clean file of daily WRF data
-    #         daily_avg = WRF_daily(day_str, files, var, domain)
+    #         daily_avg = WRF_daily(day_str, files, var, domain, current_dir)
 
     #         # Select day worth of gridMET data
     #         MET_select = MET_data.sel(time = day_str)
@@ -602,7 +607,7 @@ if __name__ == '__main__':
     main(
         var = 'uas',
         domain = '03',
-        WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014/', 
+        WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/', 
         MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/'
         )
 
