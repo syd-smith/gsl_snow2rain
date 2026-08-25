@@ -6,6 +6,7 @@ Date Created: August 18, 2026
 
 import dask.array as dsa
 import glob
+import metpy.calc as mpcalc
 from pathlib import Path
 import pooch
 import sys
@@ -23,6 +24,36 @@ sys.path.append(str(current_dir))
 
 from temporal_chunks import loc_mask
 
+
+
+u_obs_path = current_dir / 'gridMET' / 'uas'
+u_model_path = current_dir / 'daily' / 'uas'
+
+# Open datasets lazily to not overload memory
+u_obs = xr.open_mfdataset(glob.glob(str(u_obs_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('1985-01-01', '2014-12-31'))
+u_model = xr.open_mfdataset(glob.glob(str(u_model_path / '*.nc')), combine = 'nested', concat_dim = 'time')
+
+# Define paths for v component of wind
+v_obs_path = current_dir / 'gridMET' / 'vas'
+v_model_path = current_dir / 'daily' / 'vas'
+
+# Open datasets lazily to not overload memory
+v_obs = xr.open_mfdataset(glob.glob(str(v_obs_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('1985-01-01', '2014-12-31'))
+v_model = xr.open_mfdataset(glob.glob(str(v_model_path / '*.nc')), combine = 'nested', concat_dim = 'time')
+
+# Combine u and v components into magnitude
+obs = mpcalc.wind_speed(u_obs, v_obs)
+model = mpcalc.wind_speed(u_model, v_model)
+
+# Split model data into historical and future periods
+hist = model.sel(time = slice('1985-01-01', '2014-12-31'))
+fut = model.sel(time = slice('2015-01-01', '2099-12-31'))
+
+
+
+
+
+# %%
 var = 'tmmn'
 # Define paths for observation and model data
 obs_path = current_dir.parent / 'gridMET' / var

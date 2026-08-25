@@ -57,46 +57,46 @@ bias_vars = {
     'pr': 'pr',
     'sph': 'sph',
     'srad': 'rsds',
-    'vas': 'vas',
-    'uas': 'uas',
+    'vas': 'sfcwind',
+    'uas': 'sfcwind',
 }
 
 # =====================
 # ---- Functions ----
 # =====================
 
-def save_MET(data, var, year):
+def data_saver(data, destination, var, year):
     """
     Save gridMET data to a netcdf file.
     """
     # Create output directory to store new cleaned files
-    output_dir = current_dir / 'gridMET' / var
+    output_dir = current_dir / destination / var
     os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
     # Save to netcdf
-    out_path = os.path.join(output_dir, f'gridMET_{var}_{year}.nc')
+    out_path = os.path.join(output_dir, f'{var}_{year}.nc')
     data.to_netcdf(out_path)
     logger.success(f'File saved to: {out_path}')
 
-    # Close out of gridMET data once the entire year is complete
+    # Close out of data once saved
     data.close()
-    logger.success(f'{year} daily caclulations complete!')
+    logger.success(f'{var}-{year} data saved!')
 
-def convert_pr(ds, input_units):
+def convert_pr(ds, output_units):
     """
     Convert precipitation flux (kg m-2 s-1) into precipitation depth (mm/day) or vice versa.
     1mm of water equals 1kg m-2 of water.
     """
-    if input_units == 'kg m-2 s-1':
+    if output_units == 'mm/day':
         # Convert flux to depth
         conversion = ds * 86400
 
-    elif input_units == 'mm/day':
+    elif output_units == 'kg m-2 s-1':
         # Convert depth to flux
         conversion = ds / 86400
     
     else:
-        logger.error(f'{input_units} is an invalid input for this function. Units must be mm/day or kg m-2 s-1.')
+        logger.error(f'{output_units} is an invalid output for this function. Units must be mm/day or kg m-2 s-1.')
 
     return conversion
 
@@ -112,92 +112,84 @@ def convert_wind(u, v, speed):
 
 def apply_debiaser(var, obs, hist, fut):
     """
-    Debias WRF data using ECDFM method from ibicus. Parameters are set to match quantile mapping
-    debiasing used in the MACA downscaling process (GSLBIP). See documentation for more information 
-    on the code libaray used.
+    Debias WRF data using ECDFM method from ibicus. This method preserves the trend in all quantiles. 
+    Parameters are set to match quantile mapping debiasing used in the MACA downscaling process (GSLBIP). 
+    See documentation for more information on the code libaray used.
     https://ibicus.readthedocs.io/en/latest/reference/debias.html#ibicus.debias.ECDFM
     """
     if var == 'pr':
         # Convert precipitation from a depth to a flux
-        obs = convert_pr(obs, 'mm/day')
-        hist = convert_pr(hist, 'mm/day')
-        fut = convert_pr(fut, 'mm/day')
+        obs = convert_pr(obs, 'kg m-2 s-1')
+        hist = convert_pr(hist, 'kg m-2 s-1')
+        fut = convert_pr(fut, 'kg m-2 s-1')
 
+        # TODO: Check that precipitation should be nonparametric
         # Expected units: kg m-2 s-1
         debiaser = ECDFM.for_precipitation(
-            model_type = 'hurdle',  # or 'hurdle' depending on how it handles the binary split
-            amounts_distribution = None,  # Avoids parametric fitting like Gamma
+            model_type = 'hurdle',  # 
+            # amounts_distribution = None,  # Avoids parametric fitting like Gamma
             censor_values_to_zero = True, # Set values below sensoring threshold to zero
-            censoring_threshold = 0.1, # In mm/s (equal to 0.1mm/day)
-            distribution = None, # Use empirical distribution
+            censoring_threshold = 1.1574074e-06, # Equal to 0.1 mm/day
             running_window_length = 31, 
             running_window_step_length = 1 # Step size of one day for daily data
         )
 
-    elif var == 'sph' or var == 'vas' or var == 'uas':
-        # Instantiate as unbounded variables with custom settings
-        debiaser = ECDFM(
-            distribution = 'emp',
-            cdf_threshold = 0.0,  # Ensures lower bound handling at zero -> what should it be for wind?
+    elif var in ['tmmn', 'tmmx', 'wind']: 
+        # Temp expected units: K
+        # Wind expected units: m s-1
+        debiaser = ECDFM.from_variable(
+            bias_vars[var], 
             running_window_length = 31, 
             running_window_step_length = 1
         )
 
-    else: 
-        # Temp expected units: K
-        # SRAD expected units: W m-2 -> default settings don't exist
-        debiaser = ECDFM.from_variable(
-            bias_vars[var], 
-            distribution = None, # Use empirical distribution
+    else:
+        # sph and srad
+        # Instantiate as unbounded variables with custom settings
+        debiaser = ECDFM(
+            distribution = None, # Defaults it to empirical nonparametric distribution -> TODO: check that none doesnt make it error out
+            cdf_threshold = 0.0,  # Ensures lower bound handling at zero 
             running_window_length = 31, 
             running_window_step_length = 1
         )
-    
+
     # Apply debiaser to data and log success
-    debiased_data = debiaser.apply(obs, hist, fut)
+    debiased_data = debiaser.apply(obs, hist, fut) # Runs data in parallel under the hood using the predefined dask chunks
     logger.success('Quantile mapping debiaser applied to data.')
 
     return debiased_data
-
-def save_debias(var, data):
-    """Save debiased data to new directory.
-    """
-    # Create output directory to store debiased data
-    output_dir = current_dir / 'debiased'
-    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
-
-    # Save to netcdf
-    out_path = os.path.join(output_dir, f'debised_{var}.nc')
-    data.to_netcdf(out_path)
-    logger.success(f'File saved to: {out_path}')
-
-    # Close data out of memory
-    data.close()
-    logger.success(f'Bias caclulations for {var} complete!')
 
 def debiaser_setup(var): 
     """
     Setup debiaser using xr.apply_ufunc to process each location along a timeseries. This 
     requires lazy loading all of the data first before applying the debiaser.
     """
+    # Define a chunking scheme to help dask while processing large datasets
+    chunks = {
+        'time': -1,       # -1 means "keep the entire time dimension intact in a single chunk"
+        'lat': 20,        # Size of your spatial block (adjust based on grid size)
+        'lon': 20         # Size of your spatial block
+    }
+
     if var == 'wind':
         # Define paths for u component of wind
         u_obs_path = current_dir / 'gridMET' / 'uas'
         u_model_path = current_dir / 'daily' / 'uas'
 
         # Open datasets lazily to not overload memory
-        u_obs = xr.open_mfdataset(glob.glob(str(obs_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('1985-01-01', '2014-12-31'))
-        u_model = xr.open_mfdataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time')
+        u_obs = xr.open_mfdataset(glob.glob(str(u_obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks).sel(time = slice('1985-01-01', '2014-12-31'))
+        u_model = xr.open_mfdataset(glob.glob(str(u_model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks)
 
         # Define paths for v component of wind
         v_obs_path = current_dir / 'gridMET' / 'vas'
         v_model_path = current_dir / 'daily' / 'vas'
 
         # Open datasets lazily to not overload memory
-        v_obs = xr.open_mfdataset(glob.glob(str(obs_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('1985-01-01', '2014-12-31'))
-        v_model = xr.open_mfdataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time')
+        v_obs = xr.open_mfdataset(glob.glob(str(v_obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks).sel(time = slice('1985-01-01', '2014-12-31'))
+        v_model = xr.open_mfdataset(glob.glob(str(v_model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks)
         
         # Combine u and v components into magnitude
+        # TODO: If mpcalc throws errors because of dask chunking just perform calculations using simple python operations
         obs = mpcalc.wind_speed(u_obs, v_obs)
         model = mpcalc.wind_speed(u_model, v_model)
         
@@ -211,8 +203,8 @@ def debiaser_setup(var):
         model_path = current_dir / 'daily' / var
 
         # Open datasets lazily to not overload memory
-        obs = xr.open_mfdataset(glob.glob(str(obs_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('1985-01-01', '2014-12-31'))
-        model = xr.open_mfdataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time')
+        obs = xr.open_mfdataset(glob.glob(str(obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks).sel(time = slice('1985-01-01', '2014-12-31'))
+        model = xr.open_mfdataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks)
         
         # Split model data into historical and future periods
         hist = model.sel(time = slice('1985-01-01', '2014-12-31'))
@@ -221,38 +213,50 @@ def debiaser_setup(var):
     # Log success of data load
     logger.success('Lazy loaded all datasets for debiasing.')
 
-    # Apply debiaser at all locations using apply_ufunc
-    result = xr.apply_ufunc(
-        apply_debiaser, # Function being called
-        var, obs[var], hist[var], fut[var], # Passing function arguements
-        input_core_dims = [[], ['time'], ['time'], ['time']], # Treat time as the 1D loop unit
-        output_core_dims = [['time']],                   
-        vectorize = True,                                # Automatically loops over lat/lon
-        dask = 'parallelized',                           # Parallelize over chunks
-        output_dtypes = [obs['tmmn'].dtype]           # Ensure output matches input type
-        )
+    # Extract data from xr.dataset as numpy arrays
+    obs = obs[var].values
+    hist = hist[var].values
+    fut = fut[var].values
+
+    # Apply debiaser at all locations (location handling is done by ibicus library)
+    data_debiased = apply_debiaser(var, obs, hist, fut)
+    # Consider apply_ufunc only if built in location looping seems unable to handle the size of the dataset
+
+    # Reconstruct xr.dataset using model's metadata
+    ds_debiased = model[var].copy(data = data_debiased)
 
     # TODO: assert and log - result are proper shape
 
     if var == 'pr':
         # Convert precipitation back to depth
-        result = convert_pr(result, 'kg m-2 s-1')
-        
-        # Save data
-        save_debias(var, result)
+        ds_debiased = convert_pr(ds_debiased, 'mm/day')
+
+        # Save data one year at a time
+        for year, data in ds_debiased.groupby('time.year'):
+            # Save one year of data at a time
+            data_saver(data, 'debiased', var, year)
 
     elif var == 'wind':
+        # TODO: fix memories issues from mpcalc and wind conversion
         # Convert wind magnitude back to u and v
-        results = convert_wind(u_model, v_model, result)
+        results = convert_wind(u_model, v_model, ds_debiased)
         variables = ['uas', 'vas']
 
         # Save both wind component separately
         for variable, result in zip(variables, results):
-            save_debias(variable, result)
-    
+            # Save data one year at a time
+            for year, data in ds_debiased.groupby('time.year'):
+                # Save one year of data at a time
+                data_saver(data, 'debiased', var, year)
+
     else:
-        # Save data
-        save_debias(var, result)
+        # Save data one year at a time
+        for year, data in ds_debiased.groupby('time.year'):
+            # Save one year of data at a time
+            data_saver(data, 'debiased', var, year)
+
+    # Log when complete
+    logger.success(f'Bias calculations complete for {var}!')
         
 
 # Catch silent errors and report to log file
@@ -266,38 +270,38 @@ def main(variable, domain, WRF_in, MET_in):
     else:
         variables = [variable]
 
-    for var in variables:
-        # TODO: log errors if the workflow isn't completed sequentially
-        # Generate list of WRF input files
-        files = get_fpaths(WRF_in, domain)
+    # for var in variables:
+    #     # TODO: log errors if the workflow isn't completed sequentially
+    #     # Generate list of WRF input files
+    #     files = get_fpaths(WRF_in, domain)
         
-        # Set to full historical period
-        for year in range(1985, 2015):
-            # Call and interpolate gridMET data (obs) for the given year 
-            MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
+    #     # Set to full historical period
+    #     for year in range(1985, 2015):
+    #         # Call and interpolate gridMET data (obs) for the given year 
+    #         MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
 
-            # Save year of interpolated gridMET data
-            save_data = save_MET(MET_data, var, year)
+    #         # Save year of interpolated gridMET data
+    #         save_data = data_saver(MET_data, 'gridMET', var, year)
         
-        logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
+    #     logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
 
-        # # Set to historical + future period
-        # for year in range(1985, 2100):
-        #     # Create date range using pandas
-        #     # TODO: set to dates for full year
-        #     dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
+    #     # Set to historical + future period
+    #     for year in range(1985, 2100):
+    #         # Create date range using pandas
+    #         # TODO: set to dates for full year
+    #         dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
 
-        #     for day in dates:
-        #         # Turn day in to usable date string 
-        #         day_str = day.strftime('%Y-%m-%d')
+    #         for day in dates:
+    #             # Turn day in to usable date string 
+    #             day_str = day.strftime('%Y-%m-%d')
 
-        #         # Create clean file of daily WRF data
-        #         daily_avg = WRF_daily(day_str, files, var, domain, current_dir)
+    #             # Create clean file of daily WRF data
+    #             daily_avg = WRF_daily(day_str, files, var, domain, current_dir)
         
-        # logger.success(f'WRF files successfully cleaned and saved for {var}!')
+    #     logger.success(f'WRF files successfully cleaned and saved for {var}!')
 
-    # # Apply debiaser to data
-    # debiased_data = debiaser_setup(var)
+    # Apply debiaser to data
+    debiased_data = debiaser_setup(variable)
 
 # ======================
 # ---- Entry Point ----
