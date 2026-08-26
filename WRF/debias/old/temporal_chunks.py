@@ -439,13 +439,16 @@ def WRF_daily(date, files, var, domain, current_dir):
     # Check that daily_data is xr.DataArray not xr.Dataset
     assert isinstance(daily_data, xr.DataArray) or logger.error('Type must be xr.DataArray')
 
+    # Convert date to a pandas datetime object
+    time_dt = pd.to_datetime(date)
+    
     # Save daily data to a new dataset
     daily_ds = xr.Dataset(
         {
             var: (['time', 'lat', 'lon'], daily_data.values)
         },
         coords = {
-            'time': ('time', [date]),
+            'time': ('time', [time_dt]),
             'lat': (dims_3d, lat_vals),
             'lon': (dims_3d, lon_vals)
         }

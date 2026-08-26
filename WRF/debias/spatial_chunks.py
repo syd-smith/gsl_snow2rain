@@ -218,12 +218,25 @@ def debiaser_setup(var):
     hist = hist[var].values
     fut = fut[var].values
 
+    # # Apply debiaser at all locations using apply_ufunc
+    # result = xr.apply_ufunc(
+    #     apply_debiaser, # Function being called
+    #     var, obs[var], hist[var], fut[var], # Passing function arguements
+    #     input_core_dims = [[], ['time'], ['time'], ['time']], # Treat time as the 1D loop unit
+    #     output_core_dims = [['time']],                   
+    #     vectorize = True,                                # Automatically loops over lat/lon
+    #     dask = 'parallelized',                           # Parallelize over chunks
+    #     output_dtypes = [obs[var].dtype]           # Ensure output matches input type
+    #     )
+
     # Apply debiaser at all locations (location handling is done by ibicus library)
     data_debiased = apply_debiaser(var, obs, hist, fut)
     # Consider apply_ufunc only if built in location looping seems unable to handle the size of the dataset
+    log.info('Exited out of apply_debiaser. On to saving data.')
 
     # Reconstruct xr.dataset using model's metadata
-    ds_debiased = model[var].copy(data = data_debiased)
+    ds_debiased = fut[var].copy(data = data_debiased)
+    log.success('Dataset reconstructed!')
 
     # TODO: assert and log - result are proper shape
 
@@ -252,6 +265,7 @@ def debiaser_setup(var):
     else:
         # Save data one year at a time
         for year, data in ds_debiased.groupby('time.year'):
+            log.info(f'Saving data for {year}.')
             # Save one year of data at a time
             data_saver(data, 'debiased', var, year)
 

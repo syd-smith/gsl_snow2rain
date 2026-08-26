@@ -24,33 +24,42 @@ sys.path.append(str(current_dir))
 
 from temporal_chunks import loc_mask
 
+var = 'tmmn'
 
+# Define a chunking scheme to help dask while processing large datasets
+chunks = {
+    'time': -1,       # -1 means "keep the entire time dimension intact in a single chunk"
+    'lat': 20,        # Size of your spatial block (adjust based on grid size)
+    'lon': 20         # Size of your spatial block
+}
 
-u_obs_path = current_dir / 'gridMET' / 'uas'
-u_model_path = current_dir / 'daily' / 'uas'
+# Define paths for observation and model data
+obs_path = current_dir.parent / 'gridMET' / var
+model_path = current_dir.parent / 'daily' / var
 
 # Open datasets lazily to not overload memory
-u_obs = xr.open_mfdataset(glob.glob(str(u_obs_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('1985-01-01', '2014-12-31'))
-u_model = xr.open_mfdataset(glob.glob(str(u_model_path / '*.nc')), combine = 'nested', concat_dim = 'time')
-
-# Define paths for v component of wind
-v_obs_path = current_dir / 'gridMET' / 'vas'
-v_model_path = current_dir / 'daily' / 'vas'
-
-# Open datasets lazily to not overload memory
-v_obs = xr.open_mfdataset(glob.glob(str(v_obs_path / '*.nc')), combine = 'nested', concat_dim = 'time').sel(time = slice('1985-01-01', '2014-12-31'))
-v_model = xr.open_mfdataset(glob.glob(str(v_model_path / '*.nc')), combine = 'nested', concat_dim = 'time')
-
-# Combine u and v components into magnitude
-obs = mpcalc.wind_speed(u_obs, v_obs)
-model = mpcalc.wind_speed(u_model, v_model)
+obs = xr.open_mfdataset(glob.glob(str(obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks).sel(time = slice('1985-01-01', '2014-12-31'))
+model = xr.open_mfdataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks)
 
 # Split model data into historical and future periods
 hist = model.sel(time = slice('1985-01-01', '2014-12-31'))
 fut = model.sel(time = slice('2015-01-01', '2099-12-31'))
 
+# %%
+
+obs = obs[var].values
+hist = hist[var].values
+fut = fut[var].values
 
 
+from ibicus.debias import ECDFM
+debiaser = ECDFM.from_variable(
+            'tasmin', 
+            running_window_length = 31, 
+            running_window_step_length = 1
+        )
+
+debiased_data = debiaser.apply(obs, hist, fut)
 
 
 # %%
