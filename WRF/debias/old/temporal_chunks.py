@@ -6,7 +6,6 @@ Date Created: July 24, 2026
 from contextlib import contextmanager
 from datetime import datetime
 import glob
-
 from loguru import logger
 import netCDF4
 import numpy as np
@@ -324,7 +323,7 @@ def file_repair(fpath):
 
 # Make function compatible with with blocks 
 @contextmanager
-def open_or_skip(fpath, var):
+def open_or_skip(fpath):
     """
     Attempt to open a netCDF4 dataset normally and repair if netCDF structure is corrupted and throwing a HDF5 attribute error.
     """ 
@@ -345,13 +344,13 @@ def open_or_skip(fpath, var):
         raise FileNotFoundError(f'Corrupted file: {fpath}')
         # If you want you can call repair function here instead
 
-def WRF_daily(date, files, var, domain, current_dir):
+def WRF_daily(today, tomorrow, files, var, domain, current_dir):
     """
     Calculate daily average WRF value for given variable. Daily data is saved as netCDF to output_dir.
     """
 
     # List of files for given date
-    matched_files = [f for f in files if f'wrfout_d{domain}_{date}' in f]
+    matched_files = [f for f in files if f'wrfout_d{domain}_{today}' in f or f'wrfout_d{domain}_{tomorrow}' in f]
 
     # Empty list to fill with daily data
     temp_clean = []
@@ -359,7 +358,7 @@ def WRF_daily(date, files, var, domain, current_dir):
     for file in matched_files:
         try:
             # Open one timestamp file at a time
-            with open_or_skip(file, var) as ds:
+            with open_or_skip(file) as ds:
                 
                 # Only pull out data for given variable
                 var_data = ds[WRF_vars[var]]
@@ -391,6 +390,8 @@ def WRF_daily(date, files, var, domain, current_dir):
 
     # Concatonate four timestamp files into one file
     combo_clean = xr.concat(temp_clean, dim = 'time')
+
+
 
     # # Check that only four timestamps are included in the daily data
     if len(combo_clean['time']) != 4:
@@ -453,6 +454,12 @@ def WRF_daily(date, files, var, domain, current_dir):
             'lon': (dims_3d, lon_vals)
         }
     )
+
+    # Assign global attributes to new dataset
+    daily_ds.attrs = ds.attrs.copy()
+
+    # Assign variable specific attributes to new dataset
+    daily_ds[var].attrs = ds[WRF_vars[var]].attrs.copy()
 
     logger.debug(daily_ds)
 

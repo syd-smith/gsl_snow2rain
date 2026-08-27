@@ -232,13 +232,15 @@ def debiaser_setup(var):
     # Apply debiaser at all locations (location handling is done by ibicus library)
     data_debiased = apply_debiaser(var, obs, hist, fut)
     # Consider apply_ufunc only if built in location looping seems unable to handle the size of the dataset
-    log.info('Exited out of apply_debiaser. On to saving data.')
+    logger.info('Exited out of apply_debiaser. On to saving data.')
 
     # Reconstruct xr.dataset using model's metadata
     ds_debiased = fut[var].copy(data = data_debiased)
-    log.success('Dataset reconstructed!')
+    logger.success('Dataset reconstructed!')
 
     # TODO: assert and log - result are proper shape
+    # Convert debiased data to datetime object
+    ds_debiased['time'] = pd.to_datetime(ds_debiased['time'].values)
 
     if var == 'pr':
         # Convert precipitation back to depth
@@ -254,18 +256,22 @@ def debiaser_setup(var):
         # Convert wind magnitude back to u and v
         results = convert_wind(u_model, v_model, ds_debiased)
         variables = ['uas', 'vas']
+        # TODO: Check the variable names in results after splitting wind back into uas and vas
 
         # Save both wind component separately
         for variable, result in zip(variables, results):
+            # Ensure result also has the proper datetime coordinate
+            result['time'] = pd.to_datetime(result['time'].values)
+
             # Save data one year at a time
-            for year, data in ds_debiased.groupby('time.year'):
+            for year, data in result.groupby('time.year'):
                 # Save one year of data at a time
                 data_saver(data, 'debiased', var, year)
 
     else:
         # Save data one year at a time
         for year, data in ds_debiased.groupby('time.year'):
-            log.info(f'Saving data for {year}.')
+            logger.info(f'Saving data for {year}.')
             # Save one year of data at a time
             data_saver(data, 'debiased', var, year)
 
@@ -299,20 +305,29 @@ def main(variable, domain, WRF_in, MET_in):
         
     #     logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
 
-    #     # Set to historical + future period
-    #     for year in range(1985, 2100):
-    #         # Create date range using pandas
-    #         # TODO: set to dates for full year
-    #         dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
+        # Set to historical + future period
+        for year in range(1985, 2100):
+            # Create date range using pandas
+            # TODO: set to dates for full year
+            dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
 
-    #         for day in dates:
-    #             # Turn day in to usable date string 
-    #             day_str = day.strftime('%Y-%m-%d')
+            for day in dates:
+                if day == dates[0]:
+                    # Set the day you want to be working with to today
+                    today = day.strftime('%Y-%m-%d') # Turn day in to usable date string 
+                    continue
 
-    #             # Create clean file of daily WRF data
-    #             daily_avg = WRF_daily(day_str, files, var, domain, current_dir)
-        
-    #     logger.success(f'WRF files successfully cleaned and saved for {var}!')
+                else:
+                    # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
+                    tomorrow = day.strftime('%Y-%m-%d')
+
+                    # Create clean file of daily WRF data
+                    daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
+
+                    # Set tomorrow as the new today to move on to the next series
+                    today = tomorrow
+
+        logger.success(f'WRF files successfully cleaned and saved for {var}!')
 
     # Apply debiaser to data
     debiased_data = debiaser_setup(variable)
