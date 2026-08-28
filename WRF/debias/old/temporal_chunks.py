@@ -18,6 +18,7 @@ import sys
 import time
 import xarray as xr
 import xesmf as xe
+from zoneinfo import ZoneInfo
 
 
 # ==================================
@@ -391,22 +392,32 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
     # Concatonate four timestamp files into one file
     combo_clean = xr.concat(temp_clean, dim = 'time')
 
+    # Convert time values from UTC to MT
+    localized_time = pd.to_datetime(combo_clean['time'].values).tz_localize(ZoneInfo('UTC')).tz_convert(ZoneInfo('America/Denver'))
 
+    # Strip timestamps of specific timezone data
+    clean_format = localized_time.tz_localize(None)
+    ds_new_tz = combo_clean.assign_coords(time = ('time', clean_format))
 
-    # # Check that only four timestamps are included in the daily data
-    if len(combo_clean['time']) != 4:
-        logger.error(f'{date} only has {len(combo_clean["time"])} timestamps instead of 4. Some files might be corrupted or missing.')
+    # Filter dates to match today
+    target_date = dt.datetime.strptime(today, '%Y-%m-%d').date()
+    mask = localized_time.date == target_date
+    time_clean_ds = combo_clean.isel(time = mask)
+
+    # Check that only four timestamps are included in the daily data
+    if len(time_clean_ds['time']) != 4:
+        logger.error(f'{date} only has {len(time_clean_ds["time"])} timestamps instead of 4. Some files might be corrupted or missing.')
 
     if var == 'tmmx':
         # Select daily max along XTIME dim for every gridpoint
-        adj_data = combo_clean[var].max(dim = 'time')
+        adj_data = time_clean_ds[var].max(dim = 'time')
 
         # Expand time dim back out after it was collapsed
         daily_data = adj_data.expand_dims('time')
 
     elif var == 'tmmn':
         # Select daily min along XTIME dim for every gridpoint
-        adj_data = combo_clean[var].min(dim = 'time')
+        adj_data = time_clean_ds[var].min(dim = 'time')
         # TODO: check if this is most efficient way because it seems to be slower
 
         # Expand time dim back out after it was collapsed
@@ -414,7 +425,7 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
 
     elif var == 'pr':
         # WRF stores precipitation as a continuously increasing staircase - difference first and last stairstep in a day to get true precip value for that day
-        adj_data= combo_clean.isel(time = -1) - combo_clean.isel(time = 0) # -1 grabs last index regardless of how many timestamps there are
+        adj_data= time_clean_ds.isel(time = -1) - time_clean_ds.isel(time = 0) # -1 grabs last index regardless of how many timestamps there are
         daily_data = adj_data[var].expand_dims('time')
 
         # Verify that precipitation values only are positive
@@ -422,7 +433,7 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
 
     elif var == 'sph':
         # Find daily average 
-        daily_avg = combo_clean[var].mean(dim = 'time')
+        daily_avg = time_clean_ds[var].mean(dim = 'time')
         
         # Convert Q2 to specific humidity
         adj_data = daily_avg / (1 + daily_avg)
@@ -432,7 +443,7 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
 
     else:
         # Calculate daily average
-        adj_data = combo_clean[var].mean(dim = 'time')
+        adj_data = time_clean_ds[var].mean(dim = 'time')
 
         # Expand time dim back out after it was collapsed
         daily_data = adj_data.expand_dims('time')

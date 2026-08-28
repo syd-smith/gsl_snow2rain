@@ -214,42 +214,43 @@ def debiaser_setup(var):
     logger.success('Lazy loaded all datasets for debiasing.')
 
     # Extract data from xr.dataset as numpy arrays
-    obs = obs[var].values
-    hist = hist[var].values
-    fut = fut[var].values
-
-    # # Apply debiaser at all locations using apply_ufunc
-    # result = xr.apply_ufunc(
-    #     apply_debiaser, # Function being called
-    #     var, obs[var], hist[var], fut[var], # Passing function arguements
-    #     input_core_dims = [[], ['time'], ['time'], ['time']], # Treat time as the 1D loop unit
-    #     output_core_dims = [['time']],                   
-    #     vectorize = True,                                # Automatically loops over lat/lon
-    #     dask = 'parallelized',                           # Parallelize over chunks
-    #     output_dtypes = [obs[var].dtype]           # Ensure output matches input type
-    #     )
+    obs_vals = obs[var].values
+    hist_vals = hist[var].values
+    fut_vals = fut[var].values
 
     # Apply debiaser at all locations (location handling is done by ibicus library)
-    data_debiased = apply_debiaser(var, obs, hist, fut)
+    data_debiased = apply_debiaser(var, obs_vals, hist_vals, fut_vals)
     # Consider apply_ufunc only if built in location looping seems unable to handle the size of the dataset
-    logger.info('Exited out of apply_debiaser. On to saving data.')
+    logger.info('Exited out of apply_debiaser. On to saving data!')
+
+    # Ensure that the debiased data is the same shape as the future dataset
+    assert data_debiased.shape == fut[var].shape or logger.error('Debiased dataset is not the same shape as the model dataset for xarray reconstruction.')
 
     # Reconstruct xr.dataset using model's metadata
-    ds_debiased = fut[var].copy(data = data_debiased)
+    ds_debiased = fut.copy(deep = True)
+    ds_debiased[var].values = data_debiased
     logger.success('Dataset reconstructed!')
-
-    # TODO: assert and log - result are proper shape
+    
     # Convert debiased data to datetime object
     ds_debiased['time'] = pd.to_datetime(ds_debiased['time'].values)
+
+    # Create output directory to store new cleaned files
+    output_dir = current_dir / 'debiased' 
+    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
     if var == 'pr':
         # Convert precipitation back to depth
         ds_debiased = convert_pr(ds_debiased, 'mm/day')
 
-        # Save data one year at a time
-        for year, data in ds_debiased.groupby('time.year'):
-            # Save one year of data at a time
-            data_saver(data, 'debiased', var, year)
+        # Generate save name for debiased data
+        out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}.nc')
+
+        # Save data to netCDF file
+        ds_debiased.to_netcdf(out_path)
+        logger.success(f'File saved to: {out_path}')
+
+        # Close out of data once saved
+        ds_debiased.close()
 
     elif var == 'wind':
         # TODO: fix memories issues from mpcalc and wind conversion
@@ -260,25 +261,30 @@ def debiaser_setup(var):
 
         # Save both wind component separately
         for variable, result in zip(variables, results):
-            # Ensure result also has the proper datetime coordinate
-            result['time'] = pd.to_datetime(result['time'].values)
+            # Generate save name for debiased data
+            out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{variable}.nc')
 
-            # Save data one year at a time
-            for year, data in result.groupby('time.year'):
-                # Save one year of data at a time
-                data_saver(data, 'debiased', var, year)
+            # Save data to netCDF file
+            result.to_netcdf(out_path)
+            logger.success(f'File saved to: {out_path}')
+
+            # Close out of data once saved
+            result.close()
 
     else:
-        # Save data one year at a time
-        for year, data in ds_debiased.groupby('time.year'):
-            logger.info(f'Saving data for {year}.')
-            # Save one year of data at a time
-            data_saver(data, 'debiased', var, year)
+        # Generate save name for debiased data
+        out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}.nc')
+
+        # Save data to netCDF file
+        ds_debiased.to_netcdf(out_path)
+        logger.success(f'File saved to: {out_path}')
+
+        # Close out of data once saved
+        ds_debiased.close()
 
     # Log when complete
     logger.success(f'Bias calculations complete for {var}!')
         
-
 # Catch silent errors and report to log file
 @logger.catch 
 def main(variable, domain, WRF_in, MET_in):
@@ -290,20 +296,20 @@ def main(variable, domain, WRF_in, MET_in):
     else:
         variables = [variable]
 
-    # for var in variables:
-    #     # TODO: log errors if the workflow isn't completed sequentially
-    #     # Generate list of WRF input files
-    #     files = get_fpaths(WRF_in, domain)
+    for var in variables:
+        # TODO: log errors if the workflow isn't completed sequentially
+        # Generate list of WRF input files
+        files = get_fpaths(WRF_in, domain)
         
-    #     # Set to full historical period
-    #     for year in range(1985, 2015):
-    #         # Call and interpolate gridMET data (obs) for the given year 
-    #         MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
+        # Set to full historical period
+        for year in range(1985, 2015):
+            # Call and interpolate gridMET data (obs) for the given year 
+            MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
 
-    #         # Save year of interpolated gridMET data
-    #         save_data = data_saver(MET_data, 'gridMET', var, year)
+            # Save year of interpolated gridMET data
+            save_data = data_saver(MET_data, 'gridMET', var, year)
         
-    #     logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
+        logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
 
         # Set to historical + future period
         for year in range(1985, 2100):

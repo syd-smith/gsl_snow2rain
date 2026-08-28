@@ -4,6 +4,7 @@ Author: Sydney Smith
 Date Created: August 25, 2026
 """
 
+import datetime as dt
 import glob
 from loguru import logger
 import matplotlib.pyplot as plt
@@ -11,6 +12,9 @@ import pandas as pd
 from pathlib import Path
 import sys
 import xarray as xr
+from zoneinfo import ZoneInfo
+
+# %%
 
 # ==================================
 # - Establish Relative File Path - 
@@ -83,6 +87,16 @@ for file in matched_files:
 combo_clean = xr.concat(temp_clean, dim = 'time')
 
 # %%
+
+
+localized_time = pd.to_datetime(combo_clean['time'].values).tz_localize(ZoneInfo('UTC')).tz_convert(ZoneInfo('America/Denver'))
+clean_format = localized_time.tz_localize(None)
+combo_clean = combo_clean.assign_coords(time = ('time', clean_format))
+target_date = dt.datetime.strptime(today, '%Y-%m-%d').date()
+mask = localized_time.date == target_date
+ds_time_sel = combo_clean.isel(time = mask)
+
+# %%
 if var == 'tmmx':
     # Select daily max along XTIME dim for every gridpoint
     adj_data = combo_clean[var].max(dim = 'time')
@@ -120,8 +134,7 @@ else:
     # Expand time dim back out after it was collapsed
     daily_data = adj_data.expand_dims('time')
 
-# Convert date to a pandas datetime object
-time_dt = pd.to_datetime(date)
+time_dt = pd.to_datetime(target_date)
 
 # Save daily data to a new dataset
 daily_ds = xr.Dataset(
