@@ -65,6 +65,14 @@ bias_vars = {
 # ---- Functions ----
 # =====================
 
+def fix_time_coord(ds):
+
+    # Ensure the time coordinate is always parsed as a proper datetime object
+    if 'time' in ds.coords:
+        ds['time'] = pd.to_datetime(ds['time'].values)
+
+    return ds
+
 def data_saver(data, destination, var, year):
     """
     Save gridMET data to a netcdf file.
@@ -177,16 +185,16 @@ def debiaser_setup(var):
         u_model_path = current_dir / 'daily' / 'uas'
 
         # Open datasets lazily to not overload memory
-        u_obs = xr.open_mfdataset(glob.glob(str(u_obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks).sel(time = slice('1985-01-01', '2014-12-31'))
-        u_model = xr.open_mfdataset(glob.glob(str(u_model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks)
+        u_obs = xr.open_mfdataset(glob.glob(str(u_obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
+        u_model = xr.open_mfdataset(glob.glob(str(u_model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
 
         # Define paths for v component of wind
         v_obs_path = current_dir / 'gridMET' / 'vas'
         v_model_path = current_dir / 'daily' / 'vas'
 
         # Open datasets lazily to not overload memory
-        v_obs = xr.open_mfdataset(glob.glob(str(v_obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks).sel(time = slice('1985-01-01', '2014-12-31'))
-        v_model = xr.open_mfdataset(glob.glob(str(v_model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks)
+        v_obs = xr.open_mfdataset(glob.glob(str(v_obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
+        v_model = xr.open_mfdataset(glob.glob(str(v_model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
         
         # Combine u and v components into magnitude
         # TODO: If mpcalc throws errors because of dask chunking just perform calculations using simple python operations
@@ -203,8 +211,8 @@ def debiaser_setup(var):
         model_path = current_dir / 'daily' / var
 
         # Open datasets lazily to not overload memory
-        obs = xr.open_mfdataset(glob.glob(str(obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks).sel(time = slice('1985-01-01', '2014-12-31'))
-        model = xr.open_mfdataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks)
+        obs = xr.open_mfdataset(glob.glob(str(obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
+        model = xr.open_mfdataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
         
         # Split model data into historical and future periods
         hist = model.sel(time = slice('1985-01-01', '2014-12-31'))
@@ -287,7 +295,7 @@ def debiaser_setup(var):
         
 # Catch silent errors and report to log file
 @logger.catch 
-def main(variable, domain, WRF_in, MET_in):
+def main(variable, domain, WRF_in, MET_in, debias = True):
     # State what variable is being used
     logger.info(f'Debiasing for {variable}.')
 
@@ -335,14 +343,14 @@ def main(variable, domain, WRF_in, MET_in):
 
         logger.success(f'WRF files successfully cleaned and saved for {var}!')
 
-    # Apply debiaser to data
-    debiased_data = debiaser_setup(variable)
+    if debias:
+        # Apply debiaser to data
+        debiased_data = debiaser_setup(variable)
 
 # ======================
 # ---- Entry Point ----
 # ======================
 
-# TODO: preservation of metdata from original netCDFs
 # TODO: explain entry point and what variables need to be defined
 # Set variable based on gridMET variable save names
 # tmmn, tmmx, pr, sph, srad, wind (vas & uas)
@@ -355,10 +363,11 @@ if __name__ == '__main__':
 
     # Only inputs required
     main(
-        variable = 'tmmn',
+        variable = 'tmmx',
         domain = '03',
         WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/', 
-        MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/'
+        MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/',
+        debias = True
         )
 
     # Report of runtime at completion 

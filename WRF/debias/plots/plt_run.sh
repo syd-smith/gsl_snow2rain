@@ -2,12 +2,12 @@
 
 #SBATCH --account=strong-kp
 #SBATCH --partition=strong-kp
-#SBATCH --job-name=tmmx
+#SBATCH --job-name=plts
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=tmmx.out    
-#SBATCH --error=tmmx.err
+#SBATCH --output=plts.out    
+#SBATCH --error=plts.err
  
 # Load in software
 module load miniforge3
@@ -18,6 +18,6 @@ conda activate olympics
 PYTHON_BIN="/uufs/chpc.utah.edu/common/home/strong-group7/sydney/miniforge3_envs/olympics/bin/python"
 
 # Call python file
-${PYTHON_BIN} spatial_chunks.py 
+${PYTHON_BIN} validation.py 
 
 

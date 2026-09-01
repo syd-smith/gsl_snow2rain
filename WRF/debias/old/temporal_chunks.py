@@ -174,7 +174,7 @@ def interpo_MET(WRF_file, location, var, year):
     fpath = f'{location}{var}_{year}.nc'
     MET_ds = xr.open_dataset(fpath)[MET_vars[var]] # use MET_vars dictionary to access the variable by the name it's saved to in xarray
     logger.debug(f'gridMET variable in use: {MET_vars[var]}')
-    time_vals = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
+    time_vals = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D')
     n_times = len(time_vals)
 
     # Mask gridMET data to size of study region
@@ -400,13 +400,13 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
     ds_new_tz = combo_clean.assign_coords(time = ('time', clean_format))
 
     # Filter dates to match today
-    target_date = dt.datetime.strptime(today, '%Y-%m-%d').date()
+    target_date = datetime.strptime(today, '%Y-%m-%d').date()
     mask = localized_time.date == target_date
     time_clean_ds = combo_clean.isel(time = mask)
 
     # Check that only four timestamps are included in the daily data
     if len(time_clean_ds['time']) != 4:
-        logger.error(f'{date} only has {len(time_clean_ds["time"])} timestamps instead of 4. Some files might be corrupted or missing.')
+        logger.error(f'{today} only has {len(time_clean_ds["time"])} timestamps instead of 4. Some files might be corrupted or missing.')
 
     if var == 'tmmx':
         # Select daily max along XTIME dim for every gridpoint
@@ -452,7 +452,7 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
     assert isinstance(daily_data, xr.DataArray) or logger.error('Type must be xr.DataArray')
 
     # Convert date to a pandas datetime object
-    time_dt = pd.to_datetime(date)
+    time_dt = pd.to_datetime(today)
     
     # Save daily data to a new dataset
     daily_ds = xr.Dataset(
@@ -475,11 +475,11 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
     logger.debug(daily_ds)
 
     # Create output directory to store new cleaned files
-    output_dir = current_dir / 'daily' / var 
+    output_dir = current_dir / 'wrfout' / var 
     os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
     # Save to netcdf
-    out_path = os.path.join(output_dir, f'daily_{var}_{date}.nc')
+    out_path = os.path.join(output_dir, f'daily_{var}_{today}.nc')
     daily_ds.to_netcdf(out_path)
     logger.success(f'File saved to: {out_path}')
 
@@ -566,6 +566,7 @@ def climate_avg(var):
 def main(var, domain, WRF_in, MET_in):
     # State what variable is being used
     logger.info(f'Debiasing for {var}.')
+    # TODO: Build in today and tomorrow time handling (see spatial_chunks.py -> main())
 
     # # TODO: log errors if the workflow isn't completed sequentially
     # # Generate list of WRF input files
