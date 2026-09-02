@@ -475,7 +475,7 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
     logger.debug(daily_ds)
 
     # Create output directory to store new cleaned files
-    output_dir = current_dir / 'wrfout' / var 
+    output_dir = current_dir / 'daily' / var 
     os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
     # Save to netcdf

@@ -243,7 +243,7 @@ def debiaser_setup(var):
     ds_debiased['time'] = pd.to_datetime(ds_debiased['time'].values)
 
     # Create output directory to store new cleaned files
-    output_dir = current_dir / 'debiased' 
+    output_dir = current_dir / 'wrfout' 
     os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
     if var == 'pr':
@@ -363,7 +363,7 @@ if __name__ == '__main__':
 
     # Only inputs required
     main(
-        variable = 'tmmx',
+        variable = 'tmmx', # TODO: move wrfout/tmmx files to daily/tmmx
         domain = '03',
         WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/', 
         MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/',
