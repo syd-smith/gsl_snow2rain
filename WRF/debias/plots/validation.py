@@ -1,4 +1,3 @@
-# %%
 """
 Author: Sydney Smith
 Date Created: August 25, 2026
@@ -29,17 +28,6 @@ from old.temporal_chunks import open_or_skip, get_fpaths
 
 sys.path.append(str(current_dir))
 from spatial_chunks import fix_time_coord
-
-
-# Check for elevation data output
-ele_path = glob.glob(str(parent_dir / 'wrfout' / 'wrfout*HGT.nc'))
-if not ele_path:
-    logger.error('Elevation data not found. Check that elevation_data() saved data to wrfout directory.')
-
-# Open elevation data
-ele_ds = xr.open_dataset(ele_path[0])
-
-# %%
 
 # ===================
 # - Set Up Logger - 
@@ -106,15 +94,15 @@ def trend_plt(var, obs, raw, debiased, fig, ax, save = False):
     raw_yearly = raw_mean[var].resample(time = '1YS').mean()
     debiased_yearly = debiased_mean[var].resample(time = '1YS').mean()
     
+    # Log metadata on yearly averages for debugging
     logger.info(obs_yearly)
     logger.info(obs_yearly.time)
     logger.info(f'Averages complete for {var} trend calculations.')
     
-
     # Graph obs data
     ax.plot(
-        obs_yearly['time'],
-        obs_yearly[var].values, 
+        obs_yearly.time,
+        obs_yearly.values, 
         'k-', 
         alpha = 0.9, 
         label = 'Observation'
@@ -122,8 +110,8 @@ def trend_plt(var, obs, raw, debiased, fig, ax, save = False):
 
     # Graph raw WRF output data
     ax.plot(
-        raw_yearly['time'], 
-        raw_yearly[var].values, 
+        raw_yearly.time, 
+        raw_yearly.values, 
         'r-', 
         alpha = 0.9,
         label = 'Raw WRF Output'
@@ -131,19 +119,25 @@ def trend_plt(var, obs, raw, debiased, fig, ax, save = False):
 
     # Graph debiased WRF data
     ax.plot(
-        debiased_yearly['time'],
-        debiased_yearly[var].values, 
+        debiased_yearly.time,
+        debiased_yearly.values, 
         'g-',
         alpha = 0.9, 
         label = 'Debiased WRF'
     )
 
     # Adjust plot format settings
-    ax.set_title(f'Climatological Trend of {var} Averaged Across Study Region')
+    ax.set_title(f'Climatological Trend of {title[var]} Averaged Across Study Region')
     ax.set_ylabel(f'{var} ({units[var]})')
     ax.set_xlabel('Time')
     ax.grid(True, linestyle = '--', alpha = 0.5)
     ax.legend(frameon = True)
+
+    # Set labels for the x axis
+    ticks = [f'{yr}-01-01T00:00:00.000000000' for yr in range(1985, 2100, 5)]
+    labels = [f'{yr}' for yr in range(1985, 2100, 5)]
+    ax.set_xticks(ticks = ticks, labels = labels)
+    ax.tick_params(axis = 'x', rotation = 45)
 
     plt.tight_layout()
     plt.show()
@@ -162,7 +156,7 @@ def sample(data, var):
 
     # Flatten the data into a 1D array
     to_np = data[var].to_numpy()
-    flattened = np.flatten(to_np)
+    flattened = to_np.flatten()
 
     # Set size of sample dataset relative to area size
     sample_size = int(len(flattened) * 0.05)
@@ -312,27 +306,30 @@ def bias_scatter(var, raw, debiased, fig, ax, save = False):
 
     # Calculate the bias
     bias = raw - debiased
-
-    # Take the spatial and day of year average of the datasets
-    avg_bias = doy_mean(bias, var)
-    logger.info(f'Bias calculations complete for {var}.')
-
+    logger.info(f'Initial bias calculations complete for {var}.')
+    
     elevation_bands = [[1000, 1500], [1500, 2000], [2000, 2500], [2500, 3000], [3000, 5000]]
     colors = ['b', 'g', 'y', 'o', 'r']
 
     for elevations, color in zip(elevation_bands, colors):
-        # Ensure avg_bias and ele_ds are the same shape
-        assert avg_bias['south_north'].shape == ele_ds['south_north'].shape or logger.error('south_north dimensions for avg_bias do not match elevation data.')
-        assert avg_bias['west_east'].shape == ele_ds['west_east'].shape or logger.error('west_east dimensions for avg_bias do not match elevation data.')
+
+        # # Ensure avg_bias and ele_ds are the same shape
+        # assert bias['south_north'].shape == ele_ds['south_north'].shape or logger.error('south_north dimensions for bias do not match elevation data.')
+        # assert bias['west_east'].shape == ele_ds['west_east'].shape or logger.error('west_east dimensions for bias do not match elevation data.')
         
         # Mask bias data based on elevation range
         mask = (ele_ds['HGT'] >= elevations[0]) & (ele_ds['HGT'] < elevations[1])
-        masked_bias = avg_bias.where(mask, drop = True)
+        masked_bias = bias.where(mask, drop = True)
+        logger.info(f'Bias data masked for elevation range {elevations[0]} to {elevations[1]} m.')
+        logger.info(masked_bias)
+
+        # Take the spatial and day of year average of the datasets
+        avg_bias = doy_mean(bias, var)
 
         # Plot scatter data
         ax.plot(
-            masked_bias['dayofyear'],
-            masked_bias.values, 
+            avg_bias['dayofyear'],
+            avg_bias.values, 
             f'{color}o',
             alpha = 0.3, 
             label = f'{elevations[0]} to {elevations[1]} m'
@@ -385,8 +382,6 @@ def elevation_data(wrf_output_location):
         logger.success(f'Elevation data saved!')
     
     return data.squeeze()
-
-# def elevation_scatter():
     
 # Catch silent errors and report to log file
 @logger.catch 
@@ -398,7 +393,7 @@ def main(var, wrf_output_location, elevation = False):
     # Open datasets
     obs = xr.open_mfdataset(glob.glob(str(parent_dir / 'gridMET' / var / '*.nc')), combine = 'nested', concat_dim = 'time', preprocess = fix_time_coord).sortby('time')
     raw = xr.open_mfdataset(glob.glob(str(parent_dir/ 'daily' / var / '*.nc')), combine = 'nested', concat_dim = 'time', preprocess = fix_time_coord).sortby('time')
-    debiased_path = glob.glob(str(parent_dir / 'debiased' / f'*{var}*.nc'))
+    debiased_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*.nc'))
     debiased = xr.open_dataset(debiased_path[0])
 
     # Initialize plot
@@ -406,9 +401,9 @@ def main(var, wrf_output_location, elevation = False):
 
     # Test Plots
     # scatter = annual_scatter(var, obs, raw, debiased, fig, ax, save = True)
-    trend = trend_plt(var, obs, raw, debiased, fig, ax, save = True)
+    # trend = trend_plt(var, obs, raw, debiased, fig, ax, save = True)
     # cdf = cdf_plt(var, obs, raw, debiased, fig, ax, save = True)
-    # bias = bias_scatter(var, raw, debiased, fig, ax, save = True)
+    bias = bias_scatter(var, raw, debiased, fig, ax, save = True)
 
 # ======================
 # ---- Entry Point ----

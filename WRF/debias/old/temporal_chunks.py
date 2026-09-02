@@ -398,11 +398,14 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
     # Strip timestamps of specific timezone data
     clean_format = localized_time.tz_localize(None)
     ds_new_tz = combo_clean.assign_coords(time = ('time', clean_format))
+    logger.info(ds_new_tz['time'])
 
     # Filter dates to match today
     target_date = datetime.strptime(today, '%Y-%m-%d').date()
+    logger.info(f'Filtering for {target_date}')
     mask = localized_time.date == target_date
     time_clean_ds = combo_clean.isel(time = mask)
+    logger.info(time_clean_ds['time'])
 
     # Check that only four timestamps are included in the daily data
     if len(time_clean_ds['time']) != 4:
@@ -568,47 +571,47 @@ def main(var, domain, WRF_in, MET_in):
     logger.info(f'Debiasing for {var}.')
     # TODO: Build in today and tomorrow time handling (see spatial_chunks.py -> main())
 
-    # # TODO: log errors if the workflow isn't completed sequentially
-    # # Generate list of WRF input files
-    # files = get_fpaths(WRF_in, domain)
+    # TODO: log errors if the workflow isn't completed sequentially
+    # Generate list of WRF input files
+    files = get_fpaths(WRF_in, domain)
     
-    # # TODO: set to full historical period
-    # for year in range(1985, 2015):
-    #     # Call and interpolate gridMET data for the given year 
-    #     MET_data = interpo_MET(files[0], MET_in, var, year) # pass first file in files as example grid
+    # TODO: set to full historical period
+    for year in range(1985, 2015):
+        # Call and interpolate gridMET data for the given year 
+        MET_data = interpo_MET(files[0], MET_in, var, year) # pass first file in files as example grid
 
-    #     # Create date range using pandas
-    #     # TODO: set to dates for full year
-    #     dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
+        # Create date range using pandas
+        # TODO: set to dates for full year
+        dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
 
-    #     for day in dates:
-    #         # Turn day in to usable date string 
-    #         day_str = day.strftime('%Y-%m-%d')
+        for day in dates:
+            # Turn day in to usable date string 
+            day_str = day.strftime('%Y-%m-%d')
 
-    #         # Create clean file of daily WRF data
-    #         daily_avg = WRF_daily(day_str, files, var, domain, current_dir)
+            # Create clean file of daily WRF data
+            daily_avg = WRF_daily(day_str, files, var, domain, current_dir)
 
-    #         # Select day worth of gridMET data
-    #         MET_select = MET_data.sel(time = day_str)
+            # Select day worth of gridMET data
+            MET_select = MET_data.sel(time = day_str)
 
-    #         # Find bias for given data
-    #         bias = bias_daily(daily_avg, MET_select, day_str, var)
+            # Find bias for given data
+            bias = bias_daily(daily_avg, MET_select, day_str, var)
 
-    #         # Close daily files out of memory
-    #         bias.close()
+            # Close daily files out of memory
+            bias.close()
 
-    #     # Close out of gridMET data once the entire year is complete
-    #     MET_data.close()
-    #     logger.success(f'{year} daily bias caclulations complete!')
+        # Close out of gridMET data once the entire year is complete
+        MET_data.close()
+        logger.success(f'{year} daily bias caclulations complete!')
     
     # Calculate the climatological daily bias
-    # climate_avg(var)
-    # logger.success('Climatological averages complete!')
+    climate_avg(var)
+    logger.success('Climatological averages complete!')
 
-    # # Calculate fourier coefficients using custom harmonic function (multiple linear regression)
-    # # Outputs saved the harmonics directory
-    # for order in range(1, 4):
-    #     apply_harmonic(var, order)
+    # Calculate fourier coefficients using custom harmonic function (multiple linear regression)
+    # Outputs saved the harmonics directory
+    for order in range(1, 4):
+        apply_harmonic(var, order)
 
     # Pass coefficients back into custom harmonic function to get smoothed data
 
@@ -620,19 +623,19 @@ def main(var, domain, WRF_in, MET_in):
 # Set variable based on gridMET variable save names
 # tmmn, tmmx, pr, sph, srad, vas, uas
 
-if __name__ == '__main__':
-    # Track program time in log files
-    start = time.perf_counter()
-    logger.info('Beginning execution.')
+# if __name__ == '__main__':
+#     # Track program time in log files
+#     start = time.perf_counter()
+#     logger.info('Beginning execution.')
 
-    # Only inputs required
-    main(
-        var = 'uas',
-        domain = '03',
-        WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/', 
-        MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/'
-        )
+#     # Only inputs required
+#     main(
+#         var = 'uas',
+#         domain = '03',
+#         WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/', 
+#         MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/'
+#         )
 
-    # Report of runtime at completion 
-    logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
+#     # Report of runtime at completion 
+#     logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
 

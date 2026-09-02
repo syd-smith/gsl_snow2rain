@@ -2,12 +2,12 @@
 
 #SBATCH --account=strong-kp
 #SBATCH --partition=strong-kp
-#SBATCH --job-name=plts
+#SBATCH --job-name=bias
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=plts.out    
-#SBATCH --error=plts.err
+#SBATCH --output=bias.out    
+#SBATCH --error=bias.err
  
 # Load in software
 module load miniforge3
