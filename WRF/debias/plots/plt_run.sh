@@ -2,12 +2,12 @@
 
 #SBATCH --account=strong-kp
 #SBATCH --partition=strong-kp
-#SBATCH --job-name=bias
+#SBATCH --job-name=marg
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=bias.out    
-#SBATCH --error=bias.err
+#SBATCH --output=marg.out    
+#SBATCH --error=marg.err
  
 # Load in software
 module load miniforge3

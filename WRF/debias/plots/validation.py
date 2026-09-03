@@ -5,6 +5,7 @@ Date Created: August 25, 2026
 
 from datetime import datetime
 import glob
+import ibicus.evaluate as ie
 from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,7 +32,7 @@ from spatial_chunks import fix_time_coord
 
 # ===================
 # - Set Up Logger - 
-# ==================
+# ===================
 
 # Create directory for log files if it doesn't already exist
 log_path = str(current_dir / 'log')
@@ -79,10 +80,12 @@ title = {
 # ---- Functions ----
 # =====================
 
-def trend_plt(var, obs, raw, debiased, fig, ax, save = False):
+def trend_plt(var, obs, raw, debiased, save = False):
     """
     Create a graph of raw WRF output data, WRF debiased, and observational data to compare trend.
     """
+    # Initialize plot
+    fig, ax = plt.subplots(figsize = (12, 6))
 
     # Take the spatial average of each dataset 
     obs_mean = obs.mean(dim = ['lat', 'lon'])
@@ -168,10 +171,12 @@ def sample(data, var):
 
     return sample
 
-def cdf_plt(var, obs, raw, debiased, fig, ax, save = False):
+def cdf_plt(var, obs, raw, debiased, save = False):
     """
     Create a plot of the cumulative distribution function for each of the given datasets.
     """
+    # Initialize plot
+    fig, ax = plt.subplots(figsize = (12, 6))
 
     # Take a sample of the given datasets that is 5% of its original size
     sample_obs = sample(obs, var)
@@ -223,24 +228,29 @@ def cdf_plt(var, obs, raw, debiased, fig, ax, save = False):
         plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'CDF plot saved to: {save_path}')
 
-def doy_mean(data, var):
+def doy_stat(data, var, stat = 'mean'):
 
     # Average data to get 365 x 1 x 1 (day of year x lat x lon)
-    dayOyear = data[var].groupby('time.dayofyear').mean('time')
+    if stat == 'mean':
+        dayOyear = data[var].groupby('time.dayofyear').mean('time')
+    elif stat == 'median':
+        dayOyear = data[var].groupby('time.dayofyear').median('time')
     spatial_avg = dayOyear.mean(dim = ['lat', 'lon'])
-    logger.info(f'Spatial and day of year averages complete for {var}.')
+    logger.info(f'Spatial and day of year {stat} complete for {var}.')
 
     return spatial_avg
 
-def annual_scatter(var, obs, raw, debiased, fig, ax, save = False):
+def annual_scatter(var, obs, raw, debiased, stat = ['median'], save = False): # TODO: adjust stats argument to accept list of different lengths
     """
-    Create a scatter plot showing the annual cycle of given data over the entire spatial region.
+    Create a scatter plot showing the annual cycle of given data over the entire spatial region based on that stat argument passed.
     """
+    # Initialize plot
+    fig, ax = plt.subplots(1, 3, figsize = (12, 6)) # TODO: adjust plot size to number of stats passed
 
     # Take the spatial and day of year average of the datasets
-    obs = doy_mean(obs, var)
-    raw = doy_mean(raw, var)
-    debiased = doy_mean(debiased, var)
+    obs = doy_stat(obs, var, stat)
+    raw = doy_stat(raw, var, stat)
+    debiased = doy_stat(debiased, var, stat)
 
     # Plot scatter data
     ax.plot(
@@ -288,10 +298,12 @@ def annual_scatter(var, obs, raw, debiased, fig, ax, save = False):
         plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Annual scatter plot saved to: {save_path}')
 
-def bias_scatter(var, raw, debiased, fig, ax, save = False):
+def bias_scatter(var, raw, debiased, save = False):
     """
     Create a scatter plot showing the annual cycle of the bias.
     """
+    # Initialize plot
+    fig, ax = plt.subplots(figsize = (12, 6))
 
     # Check for elevation data output
     ele_path = glob.glob(str(parent_dir / 'wrfout' / 'wrfout*HGT.nc'))
@@ -306,6 +318,7 @@ def bias_scatter(var, raw, debiased, fig, ax, save = False):
 
     # Calculate the bias
     bias = raw - debiased
+    bias = bias.rename({'east_west' : 'west_east'})
     logger.info(f'Initial bias calculations complete for {var}.')
     
     elevation_bands = [[1000, 1500], [1500, 2000], [2000, 2500], [2500, 3000], [3000, 5000]]
@@ -382,6 +395,34 @@ def elevation_data(wrf_output_location):
         logger.success(f'Elevation data saved!')
     
     return data.squeeze()
+
+def marginal_bias(var, obs, raw, debiased, save = False):
+    """
+    Create a box and whisker plot of the marginal bias in the debiased dataset.
+    """
+    # Initialize plot
+    fig, ax = plt.subplots(figsize = (12, 6))
+
+    # Convert datasets into 1D numpy arrays
+    obs = obs[var].to_numpy()
+    raw = raw[var].to_numpy()
+    debiased = debiased[var].to_numpy()
+
+    # Calculate marginal bias using ibicus evaluate
+    calc = ie.marginal.calculate_marginal_bias(obs = obs, raw = raw, EDCDF = debiased) # Default statistics are mean, 0.05, 0.95
+    logger.info(f'Marginal bias calculations complete for {var}.')
+
+    # Plot dataframe output from calc
+    marg_plot = ie.marginal.plot_marginal_bias(
+        variable = var, 
+        bias_df = calc, 
+        manual_title = f'Marginal Bias of {title[var]}'
+        ) # Can add statistics title
+
+    logger.info(f'Marginal bias plot for {var} complete.')
+    logger.info(type(calc_plot))
+
+    # TODO: Save plot to current_dir
     
 # Catch silent errors and report to log file
 @logger.catch 
@@ -396,14 +437,12 @@ def main(var, wrf_output_location, elevation = False):
     debiased_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*.nc'))
     debiased = xr.open_dataset(debiased_path[0])
 
-    # Initialize plot
-    fig, ax = plt.subplots(figsize = (12, 6))
-
     # Test Plots
-    # scatter = annual_scatter(var, obs, raw, debiased, fig, ax, save = True)
-    # trend = trend_plt(var, obs, raw, debiased, fig, ax, save = True)
-    # cdf = cdf_plt(var, obs, raw, debiased, fig, ax, save = True)
-    bias = bias_scatter(var, raw, debiased, fig, ax, save = True)
+    # scatter = annual_scatter(var, obs, raw, debiased, stat = 'median', save = True)
+    # trend = trend_plt(var, obs, raw, debiased, save = True)
+    # cdf = cdf_plt(var, obs, raw, debiased, save = True)
+    # bias = bias_scatter(var, raw, debiased, save = True)
+    marg = marginal_bias(var, obs, raw, debiased, save = True)
 
 # ======================
 # ---- Entry Point ----

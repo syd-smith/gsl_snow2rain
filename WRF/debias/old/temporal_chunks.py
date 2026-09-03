@@ -188,7 +188,7 @@ def interpo_MET(WRF_file, location, var, year):
     assert MET_masked.lat.values[0] < MET_masked.lat.values[-1] or logger.error('Latitude slice did not reverse properly.')
 
     # Keep lat and lon dims as 2d for regridding process
-    dims_2d = ('south_north', 'east_west')
+    dims_2d = ('south_north', 'west_east')
 
     # Create a blueprint for a new dataset to house the interpolated data
     ds_map = xr.Dataset(
@@ -209,7 +209,7 @@ def interpo_MET(WRF_file, location, var, year):
     da_regridded = regridder(MET_masked)
 
     # Lat and lon dims really should be 3D to match WRF
-    dims_3d = ('time', 'south_north', 'east_west')
+    dims_3d = ('time', 'south_north', 'west_east')
 
     # Repeat 2D spatial grid across all time steps
     lat_3d = np.repeat(np.expand_dims(lat, axis = 0), n_times, axis = 0)
@@ -368,7 +368,7 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
                 lon_vals = ds['XLONG'].values
 
                 # Recognize that dims should be 2D
-                dims_3d = ('time', 'south_north', 'east_west')
+                dims_3d = ('time', 'south_north', 'west_east')
 
                 # Create new dataset to save data to
                 clean_ds = xr.Dataset(
