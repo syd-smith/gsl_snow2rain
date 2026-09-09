@@ -8,9 +8,11 @@ import glob
 from ibicus.debias import ECDFM
 from loguru import logger
 import metpy.calc as mpcalc
+import numpy as np
 import os
 import pandas as pd
 from pathlib import Path
+import scipy.stats as stats
 import sys
 import time
 import xarray as xr
@@ -125,6 +127,10 @@ def apply_debiaser(var, obs, hist, fut):
     See documentation for more information on the code libaray used.
     https://ibicus.readthedocs.io/en/latest/reference/debias.html#ibicus.debias.ECDFM
     """
+    # Set up RV histogram distribution from obs to simulate empirical dsitribution of the data
+    hist_vals, bin_edges = np.histogram(obs, bins = 'auto', density = True)
+    empirical_dist = stats.rv_histogram((hist_vals, bin_edges))
+
     if var == 'pr':
         # Convert precipitation from a depth to a flux
         obs = convert_pr(obs, 'kg m-2 s-1')
@@ -138,6 +144,7 @@ def apply_debiaser(var, obs, hist, fut):
             # amounts_distribution = None,  # Avoids parametric fitting like Gamma
             censor_values_to_zero = True, # Set values below sensoring threshold to zero
             censoring_threshold = 1.1574074e-06, # Equal to 0.1 mm/day
+            running_window_mode = True, 
             running_window_length = 31, 
             running_window_step_length = 1 # Step size of one day for daily data
         )
@@ -147,6 +154,7 @@ def apply_debiaser(var, obs, hist, fut):
         # Wind expected units: m s-1
         debiaser = ECDFM.from_variable(
             bias_vars[var], 
+            running_window_mode = True,
             running_window_length = 31, 
             running_window_step_length = 1
         )
@@ -155,8 +163,9 @@ def apply_debiaser(var, obs, hist, fut):
         # sph and srad
         # Instantiate as unbounded variables with custom settings
         debiaser = ECDFM(
-            distribution = None, # Defaults it to empirical nonparametric distribution -> TODO: check that none doesnt make it error out
+            distribution = empirical_dist, 
             cdf_threshold = 0.0,  # Ensures lower bound handling at zero 
+            running_window_mode = True,
             running_window_length = 31, 
             running_window_step_length = 1
         )
@@ -227,16 +236,25 @@ def debiaser_setup(var):
     fut_vals = fut[var].values
 
     # Apply debiaser at all locations (location handling is done by ibicus library)
-    data_debiased = apply_debiaser(var, obs_vals, hist_vals, fut_vals)
+    debiased_fut = apply_debiaser(var, obs_vals, hist_vals, fut_vals)
+    debiased_hist = apply_debiaser(var, obs_vals, hist_vals, hist_vals)
+
     # Consider apply_ufunc only if built in location looping seems unable to handle the size of the dataset
     logger.info('Exited out of apply_debiaser. On to saving data!')
 
     # Ensure that the debiased data is the same shape as the future dataset
-    assert data_debiased.shape == fut[var].shape or logger.error('Debiased dataset is not the same shape as the model dataset for xarray reconstruction.')
+    assert debiased_fut.shape == fut[var].shape or logger.error('Debiased future dataset is not the same shape as the model dataset for xarray reconstruction.')
+    assert debiased_hist.shape == hist[var].shape or logger.error('Debiased historical dataset is not the same shape as the model dataset for xarray reconstruction.')
 
     # Reconstruct xr.dataset using model's metadata
-    ds_debiased = fut.copy(deep = True)
-    ds_debiased[var].values = data_debiased
+    # Build out fut and hist datasets separately first
+    ds_fut = fut.copy(deep = True)
+    ds_fut[var].values = debiased_fut
+    ds_hist = hist.copy(deep = True)
+    ds_hist[var].values = debiased_hist
+
+    # Combine the two datasets along the time dimension to create a single debiased dataset
+    ds_debiased = xr.concat([ds_hist, ds_fut], dim = 'time')
     logger.success('Dataset reconstructed!')
     
     # Convert debiased data to datetime object
@@ -304,48 +322,48 @@ def main(variable, domain, WRF_in, MET_in, debias = True):
     else:
         variables = [variable]
 
-    for var in variables:
-        # TODO: log errors if the workflow isn't completed sequentially
-        # Generate list of WRF input files
-        files = get_fpaths(WRF_in, domain)
+    # for var in variables:
+    #     # TODO: log errors if the workflow isn't completed sequentially
+    #     # Generate list of WRF input files
+    #     files = get_fpaths(WRF_in, domain)
         
-        # Set to full historical period
-        for year in range(1985, 2015):
-            # Call and interpolate gridMET data (obs) for the given year 
-            MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
+    #     # Set to full historical period
+    #     for year in range(1985, 2015):
+    #         # Call and interpolate gridMET data (obs) for the given year 
+    #         MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
 
-            # Save year of interpolated gridMET data
-            save_data = data_saver(MET_data, 'gridMET', var, year)
+    #         # Save year of interpolated gridMET data
+    #         save_data = data_saver(MET_data, 'gridMET', var, year)
         
-        logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
+    #     logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
 
-        # Set to historical + future period
-        for year in range(1985, 2100):
-            # Create date range using pandas
-            # TODO: set to dates for full year
-            dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
+    #     # Set to historical + future period
+    #     for year in range(1985, 2100):
+    #         # Create date range using pandas
+    #         # TODO: set to dates for full year
+    #         dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
 
-            for day in dates:
-                if day == dates[0]:
-                    # Set the day you want to be working with to today
-                    today = day.strftime('%Y-%m-%d') # Turn day in to usable date string 
-                    continue
+    #         for day in dates:
+    #             if day == dates[0]:
+    #                 # Set the day you want to be working with to today
+    #                 today = day.strftime('%Y-%m-%d') # Turn day in to usable date string 
+    #                 continue
 
-                else:
-                    # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
-                    tomorrow = day.strftime('%Y-%m-%d')
+    #             else:
+    #                 # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
+    #                 tomorrow = day.strftime('%Y-%m-%d')
 
-                    # Create clean file of daily WRF data
-                    daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
+    #                 # Create clean file of daily WRF data
+    #                 daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
 
-                    # Set tomorrow as the new today to move on to the next series
-                    today = tomorrow
+    #                 # Set tomorrow as the new today to move on to the next series
+    #                 today = tomorrow
 
-        logger.success(f'WRF files successfully cleaned and saved for {var}!')
+    #     logger.success(f'WRF files successfully cleaned and saved for {var}!')
 
     if debias:
         # Apply debiaser to data
-        debiased_data = debiaser_setup(variable)
+        debiased_fut = debiaser_setup(variable)
 
 # ======================
 # ---- Entry Point ----
@@ -363,7 +381,7 @@ if __name__ == '__main__':
 
     # Only inputs required
     main(
-        variable = 'wind',
+        variable = 'tmmxy%',
         domain = '03',
         WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/', 
         MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/',

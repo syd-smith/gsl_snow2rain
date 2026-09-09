@@ -2,12 +2,12 @@
 
 #SBATCH --account=strong-kp
 #SBATCH --partition=strong-kp
-#SBATCH --job-name=wind
+#SBATCH --job-name=tmmx
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=wind.out    
-#SBATCH --error=wind.err
+#SBATCH --output=tmmx.out    
+#SBATCH --error=tmmx.err
  
 # Load in software
 module load miniforge3

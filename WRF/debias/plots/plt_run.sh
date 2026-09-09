@@ -2,12 +2,12 @@
 
 #SBATCH --account=strong-kp
 #SBATCH --partition=strong-kp
-#SBATCH --job-name=marg
+#SBATCH --job-name=scattera
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=marg.out    
-#SBATCH --error=marg.err
+#SBATCH --output=scattera.out    
+#SBATCH --error=scattera.err
  
 # Load in software
 module load miniforge3
