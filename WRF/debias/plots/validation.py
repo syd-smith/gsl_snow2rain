@@ -1,10 +1,10 @@
-# %%
 """
 Author: Sydney Smith
 Date Created: August 25, 2026
 """
 
 import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 from datetime import datetime
 import glob
 from loguru import logger
@@ -101,10 +101,12 @@ def loc_sel(ds, lat, lon):
 
     # Apply the mask to the dataset
     point_data = ds.where(nearest_mask, drop = True) # TODO: boolean masking here is failing because this is asking for the location of a specific point (only failing for open_mfdataset?)
+    point_data = point_data.squeeze()
+
     logger.info(f'New lat: {float(point_data["lat"][0])}')
     logger.info(f'New lon: {float(point_data["lon"][0])}')
 
-    return point_data.squeeze()
+    return point_data
 
 def trend_plt(var, obs, raw, debiased, save = False):
     """
@@ -205,14 +207,14 @@ def running_window_slice(data, date, window_length = 31):
         return
 
     # Cut running window in half to center it around selected date
-    half_window = (window_lenth - 1) / 2
+    half_window = (window_length - 1) / 2
     logger.info(f'Half window size: {half_window}')
 
     # Select bounds of the running window
     start_month = (data.sel(time = date)['time'].values + pd.Timedelta(days = -half_window)).month
     start_day = (data.sel(time = date)['time'].values + pd.Timedelta(days = -half_window)).day
-    stop_month = (data.sel(time = date)['time'].values + pd.Timedelta(days = 15)).month
-    stop_day = (data.sel(time = date)['time'].values + pd.Timedelta(days = 15)).day
+    stop_month = (data.sel(time = date)['time'].values + pd.Timedelta(days = half_window)).month
+    stop_day = (data.sel(time = date)['time'].values + pd.Timedelta(days = half_window)).day
 
     # Slice data to running window
     window = data.sel(time = (data.time.dt.month == start_month) & (data.time.dt.day >= start_day) | (data.time.dt.month == stop_month) & (data.time.dt.day <= stop_day)).values
@@ -240,9 +242,9 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
         fig, ax = plt.subplots(1, len(dates), figsize = (12, 6))
 
     # Slice dataset to a specific location
-    obs_sel = loc_sel(obs, lat, lon)
-    raw_sel = loc_sel(raw, lat, lon)
-    debiased_sel = loc_sel(debiased, lat, lon)
+    obs_sel = loc_sel(obs.load(), lat, lon)
+    raw_sel = loc_sel(raw.load(), lat, lon)
+    debiased_sel = loc_sel(debiased.load(), lat, lon)
 
     for date in dates:
         # Slice dataset down to a given window size centered on date
@@ -367,10 +369,12 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
     else:
         fig, ax = plt.subplots(1, len(stats), figsize = (12, 6)) 
 
+    logger.info(type(obs))
     # Slice dataset to a specific location
-    obs_sel = loc_sel(obs, lat, lon)
-    raw_sel = loc_sel(raw, lat, lon)
-    debiased_sel = loc_sel(debiased, lat, lon)
+    obs_sel = loc_sel(obs.load(), lat, lon)
+    raw_sel = loc_sel(raw.load(), lat, lon)
+    debiased_sel = loc_sel(debiased.load(), lat, lon)
+    logger.info(type(obs_sel))
 
     # Create list of dates
     dates = pd.date_range(start = '1985-01-01', end = '1985-12-31', freq = 'D') 
@@ -631,7 +635,7 @@ def min_n_max_bias(var, raw, debiased, save = False):
     if not ele_path:
         logger.error('Elevation data not found. Check that elevation_data() saved data to wrfout directory.')
         return
-    
+
     # Open elevation data
     ele_ds = xr.open_dataset(ele_path[0])
 
@@ -674,14 +678,76 @@ def min_n_max_bias(var, raw, debiased, save = False):
     ax[1].add_feature(lakes, linewidth = 1.5)
 
     # Add letter labels to sub plots
-    axs[0].text(0.02, 0.88, 'a.', fontsize = 60, transform = axs[0][i].transAxes)
-    axs[1].text(0.02, 0.88, 'b.', fontsize = 60, transform = axs[1][i].transAxes)
+    ax[0].text(0.02, 0.88, 'a.', fontsize = 60, transform = ax[0].transAxes)
+    ax[1].text(0.02, 0.88, 'b.', fontsize = 60, transform = ax[1].transAxes)
 
     # Opt to save image to sub directory
     if save:
-        save_path = current_dir / 'figures' / 'min_max_bias_{var}.png'
+        save_path = current_dir / 'figures' / f'min_max_bias_{var}.png'
         plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Bias map saved to: {save_path}')
+
+def seasonal_bias(var, raw, debias, save = False):
+
+
+    # Find parameters of WRF grid
+    proj_lat = debiased.attrs.get('CEN_LAT')
+    proj_lon = debiased.attrs.get('CEN_LON')
+    true_lat1 = debiased.attrs.get('TRUELAT1')
+    true_lat2 = debiased.attrs.get('TRUELAT2')
+
+    # Define the Cartopy projection that matches the WRF grid
+    wrf_proj = ccrs.LambertConformal(
+        central_longitude = proj_lon, 
+        central_latitude = proj_lat, 
+        standard_parallels = (true_lat1, true_lat2)
+    )
+
+    # Initialize plot
+    fig, ax = plt.subplots(2, 2, figsize = (12, 6), subplot_kw = {'projection': wrf_proj})
+    ax = ax.flatten()
+
+    # Check for elevation data output
+    ele_path = glob.glob(str(parent_dir / 'wrfout' / 'wrfout*HGT.nc'))
+    if not ele_path:
+        logger.error('Elevation data not found. Check that elevation_data() saved data to wrfout directory.')
+        return
+
+    # Open elevation data
+    ele_ds = xr.open_dataset(ele_path[0])
+
+    # Refine data to future period
+    raw_fut = raw.sel(time = slice('2015-01-01', '2099-12-31'))
+    debiased_fut = debiased.sel(time = slice('2015-01-01', '2099-12-31'))
+
+    # Calculate the bias
+    bias = raw_fut - debiased_fut
+    bias = bias.rename({'east_west' : 'west_east'})
+    logger.info(bias)
+    logger.info(f'Initial bias calculations complete for {var}.')
+
+    # Create list of months to show in plots
+    months = [1, 4, 7, 10]
+    labels = ['a.', 'b.', 'c.', 'd.']
+    
+    for i, month, label in enumerate(zip(months, labels)):
+        # Select month from the dataset
+        month_sel = bias.sel(time = (bias.time.dt.month == month))
+
+        # Take monthly average
+        month_avg = month_sel.mean(dim = 'time')
+
+        ax[i].pcolormesh(
+            month_avg['lat'],
+            month_avg['lon'],
+            month_avg[var],
+            shading = 'nearest',
+            cmap = cmap('MPL_coolwarm'),
+            transform = ccrs.PlateCarree() # Tells cartopy lat/lon values are in degrees
+        )
+
+
+
 
 # Catch silent errors and report to log file
 @logger.catch 
@@ -701,13 +767,13 @@ def main(var, wrf_output_location, elevation = False):
     lon = -111.978
 
     # Test Plots
-    # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True)
+    scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True)
     # trend = trend_plt(var, obs, raw, debiased, save = True)
 
     # CDF plots for SLC Airport
     # cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True)
     
-    bias_map = min_n_max_bias(var, raw, debiased, save = True)
+    # bias_map = min_n_max_bias(var, raw, debiased, save = True)
     # bias = bias_scatter(var, raw, debiased, save = True)
 
 # ======================
