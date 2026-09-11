@@ -381,7 +381,7 @@ if __name__ == '__main__':
 
     # Only inputs required
     main(
-        variable = 'tmmxy%',
+        variable = 'tmmn',
         domain = '03',
         WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/', 
         MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/',

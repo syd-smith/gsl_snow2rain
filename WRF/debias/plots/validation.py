@@ -4,9 +4,9 @@ Author: Sydney Smith
 Date Created: August 25, 2026
 """
 
+import cartopy.crs as ccrs
 from datetime import datetime
 import glob
-from ibicus.evaluate.marginal import calculate_marginal_bias, plot_marginal_bias
 from loguru import logger
 import math
 import matplotlib.pyplot as plt
@@ -18,7 +18,6 @@ from statsmodels.distributions.empirical_distribution import ECDF
 import sys
 import xarray as xr
 import xoak
-from zoneinfo import ZoneInfo
 
 # ==================================
 # - Establish Relative File Path - 
@@ -26,19 +25,17 @@ from zoneinfo import ZoneInfo
 
 current_dir = Path(__file__).resolve().parent
 parent_dir = current_dir.parent
-sys.path.append(str(parent_dir))
 
+# Import custom python modules from other directories
+sys.path.append(str(parent_dir.parent.parent))
+from from_savanna.nclcmaps import cmap
+
+sys.path.append(str(parent_dir))
 from old.temporal_chunks import open_or_skip, get_fpaths
 
 sys.path.append(str(current_dir))
 from spatial_chunks import fix_time_coord
 
-# test = xr.open_dataset('/uufs/chpc.utah.edu/common/home/strong-group7/sydney/olympics/WRF/debias/wrfout/wrfout_GSLBIP_multimodel_ssp245_tmmx.nc')
-# test_indexed = test.set_xindex(['lat', 'lon'], 
-#     xr.indexes.NDPointIndex, 
-#     tree_adapter_cls = xoak.SklearnGeoBallTreeAdapter)
-
-# %%
 # ===================
 # - Set Up Logger - 
 # ===================
@@ -88,6 +85,26 @@ title = {
 # =====================
 # ---- Functions ----
 # =====================
+
+def loc_sel(ds, lat, lon):
+    """
+    Select the nearest point to the lat and lon dims passed.
+    """
+    logger.info(f'Selecting nearest location to {lat}, {lon}.')
+
+    # Find the vector distance from the coordinates passed to every coordinate pair on the dataset's grid
+    dist = (ds['lat'] - (lat)) ** 2 + (ds['lon'] - (lon)) **2
+
+    # Create a mask that sets True for the location closest the the coordinates passed
+    nearest_mask = (dist == dist.min())
+    logger.info(f'point selected is {dist.min()} from {lat}, {lon}.')
+
+    # Apply the mask to the dataset
+    point_data = ds.where(nearest_mask, drop = True) # TODO: boolean masking here is failing because this is asking for the location of a specific point (only failing for open_mfdataset?)
+    logger.info(f'New lat: {float(point_data["lat"][0])}')
+    logger.info(f'New lon: {float(point_data["lon"][0])}')
+
+    return point_data.squeeze()
 
 def trend_plt(var, obs, raw, debiased, save = False):
     """
@@ -157,7 +174,7 @@ def trend_plt(var, obs, raw, debiased, save = False):
 
     # Opt to save image to sub directory
     if save:
-        save_path = current_dir / f'trend_{var}.png'
+        save_path = current_dir / 'figures' / f'trend_{var}.png'
         plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Trend plot saved to: {save_path}')
 
@@ -222,21 +239,10 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
     else:
         fig, ax = plt.subplots(1, len(dates), figsize = (12, 6))
 
-    # Reindex datasets to enable spatial selection
-    obs_indexed = obs.set_xindex(['lat', 'lon'], 
-        xr.indexes.NDPointIndex, 
-        tree_adapter_cls = xoak.SklearnGeoBallTreeAdapter) 
-    raw_indexed = raw.set_xindex(['lat', 'lon'], 
-        xr.indexes.NDPointIndex, 
-        tree_adapter_cls = xoak.SklearnGeoBallTreeAdapter)
-    debiased_indexed = debiased.set_xindex(['lat', 'lon'], 
-        xr.indexes.NDPointIndex, 
-        tree_adapter_cls = xoak.SklearnGeoBallTreeAdapter)
-
     # Slice dataset to a specific location
-    obs_sel = obs_indexed.sel(lon = lon, lat = lat, method = 'nearest')
-    raw_sel = raw_indexed.sel(lon = lon, lat = lat, method = 'nearest')
-    debiased_sel = debiased_indexed.sel(lon = lon, lat = lat, method = 'nearest')
+    obs_sel = loc_sel(obs, lat, lon)
+    raw_sel = loc_sel(raw, lat, lon)
+    debiased_sel = loc_sel(debiased, lat, lon)
 
     for date in dates:
         # Slice dataset down to a given window size centered on date
@@ -312,7 +318,7 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
     # Opt to save image to sub directory
     if save:
         date_str = '_'.join(map(str, dates)) # Pull out items from dates to add to filename
-        save_path = current_dir / f'cdf_{var}_{date_str}.png'
+        save_path = current_dir / 'figures' / f'cdf_{var}_{date_str}_lat:{float(debiased_sel["lat"][0]):.2f}_lon:{float(debiased_sel["lon"][0]):.2f}.png' # Pull actual grid points used
         plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'CDF plot saved to: {save_path}')
 
@@ -347,24 +353,24 @@ def calc_stat(data, var, stat = 'mean'):
     logger.info(f'Day of year {stat} complete for {var}.')
     return spatial_avg
 
-def annual_scatter(var, obs, raw, debiased, stats = ['median'], save = False): 
+def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save = False): 
     """
     Create a scatter plot showing the annual cycle of given data over the entire spatial region based on that stat argument passed.
     """
     # Adjust plot size to number of stats passed
-    if len(stat) > 3:
+    if len(stats) > 3:
         # Make additional rows if stats list is too long
-        fig, ax = plt.subplots(int(len(stat)/2), math.ceil(len(stat)/2), figsize = (12, 6)) # Round up the number of columns needed to the nearest whole number
+        fig, ax = plt.subplots(int(len(stats)/2), math.ceil(len(stats)/2), figsize = (12, 6)) # Round up the number of columns needed to the nearest whole number
         ax = ax.flatten() # Flatten the axes array to make it easier to iterate over
     
     # Keep figure to one row if stats list is 3 items or less
     else:
-        fig, ax = plt.subplots(1, len(stat), figsize = (12, 6)) 
+        fig, ax = plt.subplots(1, len(stats), figsize = (12, 6)) 
 
-    # Slice data to a specfic location
-    obs = obs.sel(lon = lon, lat = lat, method = 'nearest')
-    raw = raw.sel(lon = lon, lat = lat, method = 'nearest')
-    debiased = debiased.sel(lon = lon, lat =lat, method = 'nearest')
+    # Slice dataset to a specific location
+    obs_sel = loc_sel(obs, lat, lon)
+    raw_sel = loc_sel(raw, lat, lon)
+    debiased_sel = loc_sel(debiased, lat, lon)
 
     # Create list of dates
     dates = pd.date_range(start = '1985-01-01', end = '1985-12-31', freq = 'D') 
@@ -387,9 +393,9 @@ def annual_scatter(var, obs, raw, debiased, stats = ['median'], save = False):
 
         # Slice dataset down to a given window size centered on date
         # Default window size is 31 days
-        obs_window = running_window_slice(obs, date)
-        raw_window = running_window_slice(raw, date)
-        debiased_window = running_window_slice(debiased, date)
+        obs_window = running_window_slice(obs_sel, date)
+        raw_window = running_window_slice(raw_sel, date)
+        debiased_window = running_window_slice(debiased_sel, date)
 
         # Slice into historical and future periods
         raw_window_hist = raw_window.sel(time = raw_window.time.dt.year.isin(range(1985, 2015)))
@@ -493,7 +499,7 @@ def annual_scatter(var, obs, raw, debiased, stats = ['median'], save = False):
     # Opt to save image to sub directory
     if save:
         stat_str = '_'.join(map(str, stats)) # Pull out items from stat to add to filename
-        save_path = current_dir / f'annual_scatter_{var}_{stat_str}.png'
+        save_path = current_dir / 'figures' / f'annual_scatter_{var}_{stat_str}_lat:{float(debiased_sel["lat"][0]):.2f}_lon:{float(debiased_sel["lon"][0]):.2f }.png' # Save using actual lat and lon values used
         plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Annual scatter plot saved to: {save_path}')
 
@@ -512,9 +518,6 @@ def bias_scatter(var, raw, debiased, save = False):
     
     # Open elevation data
     ele_ds = xr.open_dataset(ele_path[0])
-
-    # Only consider the future period of the datasets
-    raw = raw.sel(time = slice('2015-01-01', '2099-12-31'))
 
     # Calculate the bias
     bias = raw - debiased
@@ -537,7 +540,9 @@ def bias_scatter(var, raw, debiased, save = False):
         logger.info(masked_bias)
 
         # Take the spatial and day of year average of the datasets
-        avg_bias = doy_stat(masked_bias, var)
+        # Average data to get 365 x 1 x 1 (day of year x lat x lon)
+        dayOyear = masked_bias[var].groupby('time.dayofyear').mean('time')
+        avg_bias = dayOyear.mean(dim = ['lat', 'lon'])
 
         # Plot scatter data
         ax.plot(
@@ -566,7 +571,7 @@ def bias_scatter(var, raw, debiased, save = False):
 
     # Opt to save image to sub directory
     if save:
-        save_path = current_dir / f'bias_scatter_{var}.png'
+        save_path = current_dir / 'figures' / f'bias_scatter_{var}.png'
         plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Bias scatter plot saved to: {save_path}')
 
@@ -597,51 +602,87 @@ def elevation_data(wrf_output_location):
     
     return data.squeeze()
 
-def marginal_bias(var, obs, raw, debiased, save = False):
+def min_n_max_bias(var, raw, debiased, save = False):
     """
-    Create a box and whisker plot of the marginal bias in the debiased dataset.
+    2D map of the study region. First panel shows minimum bias at each grid point while second panel shows the 
+    maximum. Elevation contours are overlaid on bias data.
     """
+    # TODO: cut into 28-29 years chunks if needed for a better look
 
-    # Convert datasets into 1D numpy arrays
-    obs = obs[var].to_numpy()
-    raw = raw[var].to_numpy()
-    debiased = debiased[var].to_numpy()
+    # Find parameters of WRF grid
+    proj_lat = debiased.attrs.get('CEN_LAT')
+    proj_lon = debiased.attrs.get('CEN_LON')
+    true_lat1 = debiased.attrs.get('TRUELAT1')
+    true_lat2 = debiased.attrs.get('TRUELAT2')
 
-    # Calculate marginal bias using ibicus evaluate
-    calc = calculate_marginal_bias(obs = obs, raw = raw, EDCDF = debiased) # Default statistics are mean, 0.05, 0.95
-    logger.info(f'Marginal bias calculations complete for {var}.')
-
-    # Create a box and whisker plot of the marginal bias at specified quantiles
-    box_plot = plot_marginal_bias(
-        variable = var, 
-        bias_df = calc, 
-        manual_title = f'Marginal Bias of {title[var]} ({units[var]})'
-        ) # Can add statistics title
-
-    logger.info(f'Marginal bias plot for {var} complete.')
-    logger.info(type(marg_plot))
-
-    # Create a 2D map of the spatial distribution of the marginal bias
-    spatial_plot = plot_bias_spatial(
-        variable = var,
-        metric = ['mean', 0.05, 0.95],
-        bias_df = calc, 
-        manual_title = f'Spatial Distribution of Marginal Bias for {title[var]} ({units[var]})'
+    # Define the Cartopy projection that matches the WRF grid
+    wrf_proj = ccrs.LambertConformal(
+        central_longitude = proj_lon, 
+        central_latitude = proj_lat, 
+        standard_parallels = (true_lat1, true_lat2)
     )
 
-    # Opt to save images to sub directory
-    if save:
-        box_path = current_dir / f'marginal_box_plot_{var}.png'
-        map_path = current_dir / f'marginal_spatial_plot_{var}.png'
+    # Initialize plot
+    fig, ax = plt.subplots(1, 2, figsize = (12, 6), subplot_kw = {'projection': wrf_proj})
+    ax = ax.flatten()
 
-        box_plot.savefig(box_path, dpi = 300, bbox_inches = 'tight')
-        logger.success(f'Marginal bias box plot saved to: {box_path}')
-
-        spatial_plot.savefig(map_path, dpi = 300, bbox_inches = 'tight')
-        logger.success(f'Marginal bias spatial plot saved to: {map_path}')
-
-    # TODO: Save plot to current_dir
+    # Check for elevation data output
+    ele_path = glob.glob(str(parent_dir / 'wrfout' / 'wrfout*HGT.nc'))
+    if not ele_path:
+        logger.error('Elevation data not found. Check that elevation_data() saved data to wrfout directory.')
+        return
     
+    # Open elevation data
+    ele_ds = xr.open_dataset(ele_path[0])
+
+    # Calculate the bias
+    bias = raw - debiased
+    bias = bias.rename({'east_west' : 'west_east'})
+    logger.info(bias)
+    logger.info(f'Initial bias calculations complete for {var}.')
+
+    # Take the min and max over the entire time period at each location
+    min_bias = bias.min(dim = ['time'])
+    max_bias = bias.max(dim = ['time'])
+
+    # Plot data
+    min = ax[0].pcolormesh(
+        min_bias['lon'],
+        min_bias['lat'],
+        min_bias[var],
+        shading = 'nearest',
+        cmap = cmap('GMT_ocean', revBool = True), 
+        transform = ccrs.PlateCarree() # Tells cartopy lat/lon values are in degrees
+    )
+
+    max = ax[1].pcolormesh(
+        max_bias['lon'],
+        max_bias['lat'],
+        max_bias[var],
+        shading = 'nearest',
+        cmap = cmap('MPL_afmhot', revBool = True),
+        transform = ccrs.PlateCarree() # Tells cartopy lat/lon values are in degrees
+    )
+
+    # Add colorbars
+    fig.colorbar(min, ax = ax[0], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})')
+    fig.colorbar(max, ax = ax[1], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})')
+
+    # Add lakes to maps
+    lakes = cfeature.NaturalEarthFeature(category = 'physical', name = 'lakes', scale = '50m', facecolor = 'none', edgecolor = 'k')
+    ax[0].add_feature(lakes, linewidth = 1.5)
+    ax[1].add_feature(lakes, linewidth = 1.5)
+
+    # Add letter labels to sub plots
+    axs[0].text(0.02, 0.88, 'a.', fontsize = 60, transform = axs[0][i].transAxes)
+    axs[1].text(0.02, 0.88, 'b.', fontsize = 60, transform = axs[1][i].transAxes)
+
+    # Opt to save image to sub directory
+    if save:
+        save_path = current_dir / 'figures' / 'min_max_bias_{var}.png'
+        plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
+        logger.success(f'Bias map saved to: {save_path}')
+
 # Catch silent errors and report to log file
 @logger.catch 
 def main(var, wrf_output_location, elevation = False):
@@ -655,15 +696,19 @@ def main(var, wrf_output_location, elevation = False):
     debiased_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*.nc'))
     debiased = xr.open_dataset(debiased_path[0])
 
+    # Set location of interest as SLC airport
+    lat = 40.788
+    lon = -111.978
+
     # Test Plots
-    scatter = annual_scatter(var, obs, raw, debiased, stat = ['median', 0.95, 0.5], save = True)
+    # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True)
     # trend = trend_plt(var, obs, raw, debiased, save = True)
 
-    # # CDF plots for SLC Airport
-    # cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = 40.788, lon = -111.978, save = True)
+    # CDF plots for SLC Airport
+    # cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True)
     
+    bias_map = min_n_max_bias(var, raw, debiased, save = True)
     # bias = bias_scatter(var, raw, debiased, save = True)
-    # marg = marginal_bias(var, obs, raw, debiased, save = True)
 
 # ======================
 # ---- Entry Point ----
