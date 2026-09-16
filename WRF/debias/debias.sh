@@ -2,12 +2,12 @@
 
 #SBATCH --account=strong-kp
 #SBATCH --partition=strong-kp
-#SBATCH --job-name=tmmn
+#SBATCH --job-name=tmmx-combo
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=tmmn.out    
-#SBATCH --error=tmmn.err
+#SBATCH --output=tmmx.out    
+#SBATCH --error=tmmx.err
  
 # Load in software
 module load miniforge3

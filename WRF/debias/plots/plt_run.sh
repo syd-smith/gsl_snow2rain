@@ -2,12 +2,12 @@
 
 #SBATCH --account=strong-kp
 #SBATCH --partition=strong-kp
-#SBATCH --job-name=bias_map
-#SBATCH --mem=40GB
+#SBATCH --job-name=scatterb
+#SBATCH --mem=50GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=bias_map.out    
-#SBATCH --error=bias_map.err
+#SBATCH --output=scatterb.out    
+#SBATCH --error=scatterb.err
  
 # Load in software
 module load miniforge3

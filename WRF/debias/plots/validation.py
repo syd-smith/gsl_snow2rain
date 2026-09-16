@@ -3,21 +3,16 @@ Author: Sydney Smith
 Date Created: August 25, 2026
 """
 
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
 from datetime import datetime
 import glob
 from loguru import logger
-import math
 import matplotlib.pyplot as plt
 import numpy as np
 import os
 import pandas as pd
 from pathlib import Path
-from statsmodels.distributions.empirical_distribution import ECDF
 import sys
 import xarray as xr
-import xoak
 
 # ==================================
 # - Establish Relative File Path - 
@@ -95,13 +90,20 @@ def loc_sel(ds, lat, lon):
     # Find the vector distance from the coordinates passed to every coordinate pair on the dataset's grid
     dist = (ds['lat'] - (lat)) ** 2 + (ds['lon'] - (lon)) **2
 
-    # Create a mask that sets True for the location closest the the coordinates passed
-    nearest_mask = (dist == dist.min())
-    logger.info(f'point selected is {dist.min()} from {lat}, {lon}.')
+    # Find the min distance and pull out its x and y index values
+    dist_min = np.argmin(dist)
+    logger.info(f'Point selected is {dist_min} from {lat}, {lon}.')
+    y_idx, x_idx = np.unravel_index(min_dist, dist.shape)
+    logger.info(f'Min distance is located at {x_idx}, {y_idx}.')
+    
+    # SPull grid's spatial dims dynamically
+    spatial_dims = ds['lat'].dims
 
-    # Apply the mask to the dataset
-    point_data = ds.where(nearest_mask, drop = True) # TODO: boolean masking here is failing because this is asking for the location of a specific point (only failing for open_mfdataset?)
-    point_data = point_data.squeeze()
+    # Select min distance grid point using isel
+    point_data = ds.isel({
+        spatial_dims[0]: y_idx,
+        spatial_dims[1]: x_idx
+    }).squeeze()
 
     logger.info(f'New lat: {float(point_data["lat"][0])}')
     logger.info(f'New lon: {float(point_data["lon"][0])}')
@@ -112,6 +114,8 @@ def trend_plt(var, obs, raw, debiased, save = False):
     """
     Create a graph of raw WRF output data, WRF debiased, and observational data to compare trend.
     """
+    logger.info(f'Creating trend plot for {var}.')
+
     # Initialize plot
     fig, ax = plt.subplots(figsize = (12, 6))
 
@@ -200,7 +204,10 @@ def sample(data, var):
     return sample
 
 def running_window_slice(data, date, window_length = 31):
-
+    """"
+    Select only data within the window length (measured in number of days and centered around
+    date given) across the entire dataset.
+    """
     # Ensure the running window length is an odd number (has to be odd for the given day to sit in the exact middle of the window)
     if window_length % 2 == 0:
         logger.error('Window length must be an odd numer.')
@@ -217,7 +224,7 @@ def running_window_slice(data, date, window_length = 31):
     stop_day = (data.sel(time = date)['time'].values + pd.Timedelta(days = half_window)).day
 
     # Slice data to running window
-    window = data.sel(time = (data.time.dt.month == start_month) & (data.time.dt.day >= start_day) | (data.time.dt.month == stop_month) & (data.time.dt.day <= stop_day)).values
+    window = data.sel(time = (data.time.dt.month == start_month) & (data.time.dt.day >= start_day) | (data.time.dt.month == stop_month) & (data.time.dt.day <= stop_day))
     logger.info(window)
     logger.info(f'Data sliced to running window for {date}.')
 
@@ -230,6 +237,9 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
     This function was intended to create a four pannel plot relecting four dates passed 
     with one date in each season (a seasonal pannel cdf plot).
     """
+    import math
+    from statsmodels.distributions.empirical_distribution import ECDF
+    logger.info(f'Creating cdf plot for {var}.')
 
     # Adjust plot size to number of dates passed
     if len(dates) > 3:
@@ -242,9 +252,9 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
         fig, ax = plt.subplots(1, len(dates), figsize = (12, 6))
 
     # Slice dataset to a specific location
-    obs_sel = loc_sel(obs.load(), lat, lon)
-    raw_sel = loc_sel(raw.load(), lat, lon)
-    debiased_sel = loc_sel(debiased.load(), lat, lon)
+    obs_sel = loc_sel(obs, lat, lon)
+    raw_sel = loc_sel(raw, lat, lon)
+    debiased_sel = loc_sel(debiased, lat, lon)
 
     for date in dates:
         # Slice dataset down to a given window size centered on date
@@ -359,6 +369,9 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
     """
     Create a scatter plot showing the annual cycle of given data over the entire spatial region based on that stat argument passed.
     """
+    import math
+    logger.info(f'Creating annual scatter plot for {var}.')
+
     # Adjust plot size to number of stats passed
     if len(stats) > 3:
         # Make additional rows if stats list is too long
@@ -371,9 +384,9 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
 
     logger.info(type(obs))
     # Slice dataset to a specific location
-    obs_sel = loc_sel(obs.load(), lat, lon)
-    raw_sel = loc_sel(raw.load(), lat, lon)
-    debiased_sel = loc_sel(debiased.load(), lat, lon)
+    obs_sel = loc_sel(obs, lat, lon)
+    raw_sel = loc_sel(raw, lat, lon)
+    debiased_sel = loc_sel(debiased, lat, lon)
     logger.info(type(obs_sel))
 
     # Create list of dates
@@ -511,6 +524,8 @@ def bias_scatter(var, raw, debiased, save = False):
     """
     Create a scatter plot showing the annual cycle of the bias.
     """
+    logger.info(f'Creating bias scatter plot for {var}.')
+
     # Initialize plot
     fig, ax = plt.subplots(figsize = (12, 6))
 
@@ -611,7 +626,10 @@ def min_n_max_bias(var, raw, debiased, save = False):
     2D map of the study region. First panel shows minimum bias at each grid point while second panel shows the 
     maximum. Elevation contours are overlaid on bias data.
     """
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
     # TODO: cut into 28-29 years chunks if needed for a better look
+    logger.info(f'Creating min and max bias map for {var}.')
 
     # Find parameters of WRF grid
     proj_lat = debiased.attrs.get('CEN_LAT')
@@ -650,27 +668,27 @@ def min_n_max_bias(var, raw, debiased, save = False):
     max_bias = bias.max(dim = ['time'])
 
     # Plot data
-    min = ax[0].pcolormesh(
-        min_bias['lon'],
-        min_bias['lat'],
-        min_bias[var],
-        shading = 'nearest',
-        cmap = cmap('GMT_ocean', revBool = True), 
-        transform = ccrs.PlateCarree() # Tells cartopy lat/lon values are in degrees
+    min = min_bias[var].plot.pcolormesh(
+        ax = ax[0], 
+        x = 'lon',
+        y = 'lat',
+        transform = wrf_proj, 
+        cmap = cmap('GMT_ocean', revBool = True),
+        shading = 'nearest'
     )
 
-    max = ax[1].pcolormesh(
-        max_bias['lon'],
-        max_bias['lat'],
-        max_bias[var],
-        shading = 'nearest',
+    max = max_bias[var].plot.pcolormesh(
+        ax = ax[1],
+        x = 'lon',
+        y = 'lat',
+        transform = wrf_proj,
         cmap = cmap('MPL_afmhot', revBool = True),
-        transform = ccrs.PlateCarree() # Tells cartopy lat/lon values are in degrees
-    )
+        shading = 'nearest'
+        )
 
     # Add colorbars
-    fig.colorbar(min, ax = ax[0], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})')
-    fig.colorbar(max, ax = ax[1], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})')
+    fig.colorbar(min, ax = ax[0], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})', shrink = 0.7)
+    fig.colorbar(max, ax = ax[1], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})', shrink = 0.7)
 
     # Add lakes to maps
     lakes = cfeature.NaturalEarthFeature(category = 'physical', name = 'lakes', scale = '50m', facecolor = 'none', edgecolor = 'k')
@@ -688,7 +706,12 @@ def min_n_max_bias(var, raw, debiased, save = False):
         logger.success(f'Bias map saved to: {save_path}')
 
 def seasonal_bias(var, raw, debias, save = False):
-
+    """
+    Creates a map of averaged monthly biases. Each subplot corresponds with a season.
+    """
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+    logger.info(f'Creating seasonal bias map for {var}.')
 
     # Find parameters of WRF grid
     proj_lat = debiased.attrs.get('CEN_LAT')
@@ -737,17 +760,29 @@ def seasonal_bias(var, raw, debias, save = False):
         # Take monthly average
         month_avg = month_sel.mean(dim = 'time')
 
-        ax[i].pcolormesh(
-            month_avg['lat'],
-            month_avg['lon'],
-            month_avg[var],
+        avg_plt = month_avg[var].pcolormesh(
+            ax = ax[i],
+            x = 'lon',
+            y = 'lat',
             shading = 'nearest',
             cmap = cmap('MPL_coolwarm'),
-            transform = ccrs.PlateCarree() # Tells cartopy lat/lon values are in degrees
+            transform = wrf_proj # Tells cartopy lat/lon values are in degrees
         )
 
+        fig.colorbar(avg_plt, ax = ax[i], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})', shrink = 0.7)
 
+        # Add lakes to maps
+        lakes = cfeature.NaturalEarthFeature(category = 'physical', name = 'lakes', scale = '50m', facecolor = 'none', edgecolor = 'k')
+        ax[i].add_feature(lakes, linewidth = 1.5)
 
+        # Add letter labels to sub plots
+        ax[i].text(0.02, 0.88, label, fontsize = 60, transform = ax[i].transAxes)
+
+    # Opt to save image to sub directory
+    if save:
+        save_path = current_dir / 'figures' / f'spatial_bias_{var}.png'
+        plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
+        logger.success(f'Seasonal bias map saved to: {save_path}')
 
 # Catch silent errors and report to log file
 @logger.catch 
@@ -767,14 +802,15 @@ def main(var, wrf_output_location, elevation = False):
     lon = -111.978
 
     # Test Plots
-    scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True)
+    # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True)
     # trend = trend_plt(var, obs, raw, debiased, save = True)
 
     # CDF plots for SLC Airport
     # cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True)
     
+    # seasonal = seasonal_bias(var, raw, debias, save = False)
     # bias_map = min_n_max_bias(var, raw, debiased, save = True)
-    # bias = bias_scatter(var, raw, debiased, save = True)
+    bias = bias_scatter(var, raw, debiased, save = True)
 
 # ======================
 # ---- Entry Point ----

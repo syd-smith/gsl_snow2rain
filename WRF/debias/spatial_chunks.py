@@ -131,6 +131,14 @@ def apply_debiaser(var, obs, hist, fut):
     hist_vals, bin_edges = np.histogram(obs, bins = 'auto', density = True)
     empirical_dist = stats.rv_histogram((hist_vals, bin_edges))
 
+    # Check for zeros in the datasets
+    obs_zeros = (obs == 0).any(dim = ' time')
+    logger.info(f'Obs dataset has zeros at: {obs_zeros}')
+    hist_zeros = (hist == 0).any(dim = ' time')
+    logger.info(f'Historical dataset has zeros at: {hist_zeros}')
+    fut_zeros = (fut == 0).any(dim = ' time')
+    logger.info(f'Future dataset has zeros at: {fut_zeros}')
+
     if var == 'pr':
         # Convert precipitation from a depth to a flux
         obs = convert_pr(obs, 'kg m-2 s-1')
@@ -210,10 +218,9 @@ def debiaser_setup(var):
         obs = mpcalc.wind_speed(u_obs, v_obs)
         model = mpcalc.wind_speed(u_model, v_model)
         
-        # Split model data into historical and future periods
+        # Isolate model historical period
         hist = model.sel(time = slice('1985-01-01', '2014-12-31'))
-        fut = model.sel(time = slice('2015-01-01', '2099-12-31'))
-
+  
     else:
         # Define paths for observation and model data
         obs_path = current_dir / 'gridMET' / var
@@ -223,9 +230,8 @@ def debiaser_setup(var):
         obs = xr.open_mfdataset(glob.glob(str(obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
         model = xr.open_mfdataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
         
-        # Split model data into historical and future periods
+        # Isolate model istorical period
         hist = model.sel(time = slice('1985-01-01', '2014-12-31'))
-        fut = model.sel(time = slice('2015-01-01', '2099-12-31'))
 
     # Log success of data load
     logger.success('Lazy loaded all datasets for debiasing.')
@@ -233,28 +239,23 @@ def debiaser_setup(var):
     # Extract data from xr.dataset as numpy arrays
     obs_vals = obs[var].values
     hist_vals = hist[var].values
-    fut_vals = fut[var].values
+    model_vals = model[var].values
 
     # Apply debiaser at all locations (location handling is done by ibicus library)
-    debiased_fut = apply_debiaser(var, obs_vals, hist_vals, fut_vals)
-    debiased_hist = apply_debiaser(var, obs_vals, hist_vals, hist_vals)
+    debiased = apply_debiaser(var, obs_vals, hist_vals, model_vals)
+    logger.info(debiased)
 
     # Consider apply_ufunc only if built in location looping seems unable to handle the size of the dataset
     logger.info('Exited out of apply_debiaser. On to saving data!')
 
     # Ensure that the debiased data is the same shape as the future dataset
-    assert debiased_fut.shape == fut[var].shape or logger.error('Debiased future dataset is not the same shape as the model dataset for xarray reconstruction.')
-    assert debiased_hist.shape == hist[var].shape or logger.error('Debiased historical dataset is not the same shape as the model dataset for xarray reconstruction.')
-
+    assert debiased.shape == model[var].shape or logger.error('Debiased dataset is not the same shape as the model dataset for xarray reconstruction.')
+    
     # Reconstruct xr.dataset using model's metadata
     # Build out fut and hist datasets separately first
-    ds_fut = fut.copy(deep = True)
-    ds_fut[var].values = debiased_fut
-    ds_hist = hist.copy(deep = True)
-    ds_hist[var].values = debiased_hist
-
-    # Combine the two datasets along the time dimension to create a single debiased dataset
-    ds_debiased = xr.concat([ds_hist, ds_fut], dim = 'time')
+    ds_debiased = model.copy(deep = True)
+    ds_debiased[var].values = debiased
+    logger.info(ds_debiased)
     logger.success('Dataset reconstructed!')
     
     # Convert debiased data to datetime object
@@ -381,7 +382,7 @@ if __name__ == '__main__':
 
     # Only inputs required
     main(
-        variable = 'tmmn',
+        variable = 'tmmx',
         domain = '03',
         WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/', 
         MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/',
