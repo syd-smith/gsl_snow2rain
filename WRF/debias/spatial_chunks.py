@@ -127,16 +127,17 @@ def apply_debiaser(var, obs, hist, fut):
     See documentation for more information on the code libaray used.
     https://ibicus.readthedocs.io/en/latest/reference/debias.html#ibicus.debias.ECDFM
     """
+    # TODO: Verify that empirical distribution setup is proper method in this use case
     # Set up RV histogram distribution from obs to simulate empirical dsitribution of the data
     hist_vals, bin_edges = np.histogram(obs, bins = 'auto', density = True)
     empirical_dist = stats.rv_histogram((hist_vals, bin_edges))
 
     # Check for zeros in the datasets
-    obs_zeros = (obs == 0).any(dim = ' time')
+    obs_zeros = (obs == 0).any()
     logger.info(f'Obs dataset has zeros at: {obs_zeros}')
-    hist_zeros = (hist == 0).any(dim = ' time')
+    hist_zeros = (hist == 0).any()
     logger.info(f'Historical dataset has zeros at: {hist_zeros}')
-    fut_zeros = (fut == 0).any(dim = ' time')
+    fut_zeros = (fut == 0).any()
     logger.info(f'Future dataset has zeros at: {fut_zeros}')
 
     if var == 'pr':
@@ -168,7 +169,9 @@ def apply_debiaser(var, obs, hist, fut):
         )
 
     else:
-        # sph and srad
+        logger.info(f'Using custom debiaser setup to debias {var} data!')
+
+        # Intended for sph and srad
         # Instantiate as unbounded variables with custom settings
         debiaser = ECDFM(
             distribution = empirical_dist, 
@@ -323,44 +326,66 @@ def main(variable, domain, WRF_in, MET_in, debias = True):
     else:
         variables = [variable]
 
-    # for var in variables:
-    #     # TODO: log errors if the workflow isn't completed sequentially
-    #     # Generate list of WRF input files
-    #     files = get_fpaths(WRF_in, domain)
+    for var in variables:
+        # TODO: log errors if the workflow isn't completed sequentially
+        # Generate list of WRF input files
+        files = get_fpaths(WRF_in, domain)
         
-    #     # Set to full historical period
-    #     for year in range(1985, 2015):
-    #         # Call and interpolate gridMET data (obs) for the given year 
-    #         MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
+        # Set to full historical period
+        for year in range(1985, 2015):
+            # Call and interpolate gridMET data (obs) for the given year 
+            MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
 
-    #         # Save year of interpolated gridMET data
-    #         save_data = data_saver(MET_data, 'gridMET', var, year)
+            # Save year of interpolated gridMET data
+            save_data = data_saver(MET_data, 'gridMET', var, year)
+
+        # Combine all gridMET files into a single file with context manager
+        with xr.open_mfdataset(
+            glob.glob(str(current_dir / 'gridMET' / var / '*.nc')), 
+            combine = 'nested', 
+            concat_dim = 'time', 
+            preprocess = fix_time_coord
+            ) as gridmet_open:
+
+            # Write file to netcdf
+            gridmet_open.sortby('time').to_netcdf(current_dir / 'gridMET' / f'gridMET_GSLBIP_{var}.nc')
         
-    #     logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
+        logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
 
-    #     # Set to historical + future period
-    #     for year in range(1985, 2100):
-    #         # Create date range using pandas
-    #         # TODO: set to dates for full year
-    #         dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
+        # Set to historical + future period
+        for year in range(1985, 2100):
+            # Create date range using pandas
+            # TODO: set to dates for full year
+            dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
 
-    #         for day in dates:
-    #             if day == dates[0]:
-    #                 # Set the day you want to be working with to today
-    #                 today = day.strftime('%Y-%m-%d') # Turn day in to usable date string 
-    #                 continue
+            for day in dates:
+                if day == dates[0]:
+                    # Set the day you want to be working with to today
+                    today = day.strftime('%Y-%m-%d') # Turn day in to usable date string 
+                    continue
 
-    #             else:
-    #                 # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
-    #                 tomorrow = day.strftime('%Y-%m-%d')
+                else:
+                    # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
+                    tomorrow = day.strftime('%Y-%m-%d')
 
-    #                 # Create clean file of daily WRF data
-    #                 daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
+                    # Create clean file of daily WRF data
+                    daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
 
-    #                 # Set tomorrow as the new today to move on to the next series
-    #                 today = tomorrow
+                    # Set tomorrow as the new today to move on to the next series
+                    today = tomorrow
+        
+        # Combine all cleaned WRF files into a single file using context manager
+        with xr.open_mfdataset(
+            glob.glob(str(current_dir / 'daily' / var / '*.nc')), 
+            combine = 'nested', 
+            concat_dim = 'time', 
+            preprocess = fix_time_coord
+            ) as wrf_open:
 
-    #     logger.success(f'WRF files successfully cleaned and saved for {var}!')
+            # Write file to netcdf
+            wrf_open.sortby('time').to_netcdf(current_dir / 'daily' / f'wrf_raw_GSLBIP_multimodel_ssp245_{var}.nc')
+
+        logger.success(f'WRF files successfully cleaned and saved for {var}!')
 
     if debias:
         # Apply debiaser to data
@@ -390,7 +415,7 @@ if __name__ == '__main__':
         )
 
     # Report of runtime at completion 
-    logger.success(f'Debiasing process completed for {var}!')
+    logger.success(f'Debiasing process completed for {variable}!')
     logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
 
     # Force script to stop running once code is finished

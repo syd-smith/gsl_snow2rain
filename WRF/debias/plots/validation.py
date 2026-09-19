@@ -1,3 +1,4 @@
+#%%
 """
 Author: Sydney Smith
 Date Created: August 25, 2026
@@ -31,6 +32,40 @@ from old.temporal_chunks import open_or_skip, get_fpaths
 sys.path.append(str(current_dir))
 from spatial_chunks import fix_time_coord
 
+var = 'tmmn'
+obs_path = glob.glob(str(parent_dir / 'gridMET' / f'*{var}*.nc'))
+ds = xr.open_dataset(obs_path[0], decode_times = False)
+ds = ds.mean(dim = 'east_west')
+
+lat = 40.788
+lon = -111.978
+
+# Select single array along time dim to reduce ds size
+lat_2d = ds[var].isel(time = 0, drop = True)
+lon_2d = ds[var].isel(time = 0, drop = True)
+
+# Find the vector distance from the coordinates passed to every coordinate pair on the dataset's grid
+dist = (lat_2d - (lat)) ** 2 + (lon_2d - (lon)) ** 2
+
+# Find the min distance and pull out its x and y index values
+dist_min = dist.argmin()
+logger.info(f'Point selected is {dist_min} from {lat}, {lon}.')
+y_idx, x_idx = np.unravel_index(dist_min, dist.shape)
+logger.info(f'Min distance is located at {x_idx}, {y_idx}.')
+
+# SPull grid's spatial dims dynamically
+spatial_dims = ds['lat'].dims
+
+# Select min distance grid point using isel
+point_data = ds.isel({
+    spatial_dims[0]: y_idx,
+    spatial_dims[1]: x_idx
+}).squeeze()
+
+logger.info(f'New lat: {float(point_data.lat.values[0][0])}')
+logger.info(f'New lon: {float(point_data.lon.values[0][0])}')
+
+#%%
 # ===================
 # - Set Up Logger - 
 # ===================
@@ -87,13 +122,17 @@ def loc_sel(ds, lat, lon):
     """
     logger.info(f'Selecting nearest location to {lat}, {lon}.')
 
+    # Select single array along time dim to reduce ds size
+    lat_2d = ds.isel(time = 0, drop = True)
+    lon_2d = ds.isel(time = 0, drop = True)
+
     # Find the vector distance from the coordinates passed to every coordinate pair on the dataset's grid
-    dist = (ds['lat'] - (lat)) ** 2 + (ds['lon'] - (lon)) **2
+    dist = (lat_2d - (lat)) ** 2 + (lon_2d - (lon)) ** 2
 
     # Find the min distance and pull out its x and y index values
     dist_min = np.argmin(dist)
     logger.info(f'Point selected is {dist_min} from {lat}, {lon}.')
-    y_idx, x_idx = np.unravel_index(min_dist, dist.shape)
+    y_idx, x_idx = np.unravel_index(dist_min, dist.shape)
     logger.info(f'Min distance is located at {x_idx}, {y_idx}.')
     
     # SPull grid's spatial dims dynamically
@@ -382,12 +421,12 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
     else:
         fig, ax = plt.subplots(1, len(stats), figsize = (12, 6)) 
 
-    logger.info(type(obs))
+    logger.info(f'Obs dataset type: {type(obs)}')
     # Slice dataset to a specific location
     obs_sel = loc_sel(obs, lat, lon)
     raw_sel = loc_sel(raw, lat, lon)
     debiased_sel = loc_sel(debiased, lat, lon)
-    logger.info(type(obs_sel))
+    logger.info(f'Obs dataset type after location selection {type(obs_sel)}')
 
     # Create list of dates
     dates = pd.date_range(start = '1985-01-01', end = '1985-12-31', freq = 'D') 
@@ -403,10 +442,12 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
         } 
         for stat in stats
         } # Dynamically stores data based on whats in stats
+    logger.info('Stats dictionary created!')
 
     for day in dates:
         # Turn day in to usable date string 
         date = day.strftime('%Y-%m-%d')
+        logger.info(f'Starting calculations for {date}')
 
         # Slice dataset down to a given window size centered on date
         # Default window size is 31 days
@@ -436,19 +477,24 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
             stat_results[stat]['debiased_fut'].append(debiased_stat_fut)
 
             logger.info(f'Data stored to {stat} for {date}.')
+        
+        # Close all datasets out of memory
+        obs_window.close()
+        raw_window.close()
+        debiased_window.close()
+        raw_window_hist.close()
+        raw_window_fut.close()
+        debiased_window_hist.close()
+        debiased_window_fut.close()
 
     # Create a subplot for each stat
-    for position, stat in enumerate(stats):
-        # Log data type of input data
-        logger.info(f'Obs datatype: {type(obs)}')
-        logger.info(f'Raw datatype: {type(raw)}')
-        logger.info(f'Debiased datatype: {type(debiased)})')
+    for i, stat in enumerate(stats):
 
         # Format dates to include only the month and day
         formatted_dates = dates.strftime('%m-%d')
 
         # Plot scatter data
-        ax[position].plot(
+        ax[i].plot(
             formatted_dates,
             stat_results[stat]['obs'], 
             'ko',
@@ -457,7 +503,7 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
             label = 'Observations'
         )
 
-        ax[position].plot(
+        ax[i].plot(
             formatted_dates,
             stat_results[stat]['raw_hist'], 
             'ro',
@@ -466,7 +512,7 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
             label = 'Historical WRF Output'
         )
 
-        ax[position].plot(
+        ax[i].plot(
             formatted_dates, 
             stat_results[stat]['raw_fut'], 
             'ro',
@@ -475,7 +521,7 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
             label = 'Future WRF Output'
         )
 
-        ax[position].plot(
+        ax[i].plot(
             formatted_dates,
             stat_results[stat]['debiased_hist'], 
             'go',
@@ -484,7 +530,7 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
             label = 'Historical Debiased WRF'
         )
 
-        ax[position].plot(
+        ax[i].plot(
             formatted_dates,
             stat_results[stat]['debiased_fut'],
             'go',
@@ -494,15 +540,15 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
         )
 
         # Adjust plot format settings
-        ax[position].set_title(f'{stat}')
-        ax[position].set_ylabel(f'{var} ({units[var]})')
-        ax[position].grid(True, linestyle = '--', alpha = 0.5)
-        ax[position].legend(frameon = True)
+        ax[i].set_title(f'{stat}')
+        ax[i].set_ylabel(f'{var} ({units[var]})')
+        ax[i].grid(True, linestyle = '--', alpha = 0.5)
+        ax[i].legend(frameon = True)
 
         # Set x axis labels and tick labels
-        ax[position].set_xlabel('Day of Year')
-        ax[position].set_xticks(labels = ['01-01', '02-01', '03-01', '04-01', '05-01', '06-01', '07-01', '08-01', '09-01', '10-01', '11-01', '12-01', ''])
-        ax[position].tick_params(axis = 'x', rotation = 45)
+        ax[i].set_xlabel('Day of Year')
+        ax[i].set_xticks(labels = ['01-01', '02-01', '03-01', '04-01', '05-01', '06-01', '07-01', '08-01', '09-01', '10-01', '11-01', '12-01', ''])
+        ax[i].tick_params(axis = 'x', rotation = 45)
 
         # Log what stat was added
         logger.info(f'Scatter plot for {stat} of {var} completed!')
@@ -624,7 +670,7 @@ def elevation_data(wrf_output_location):
 def min_n_max_bias(var, raw, debiased, save = False):
     """
     2D map of the study region. First panel shows minimum bias at each grid point while second panel shows the 
-    maximum. Elevation contours are overlaid on bias data.
+    maximum. Elevation contours are overlaid on bias data. Note that calculations are only over the future period.
     """
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
@@ -657,11 +703,18 @@ def min_n_max_bias(var, raw, debiased, save = False):
     # Open elevation data
     ele_ds = xr.open_dataset(ele_path[0])
 
+    # Trim datasets to future period only
+    raw_fut = raw.sel(time = slice('2014-01-01', '2099-12-31'))
+    debiased_fut = debiased.sel(time = slice('2014-01-01', '2099-12-31'))
+
     # Calculate the bias
-    bias = raw - debiased
+    bias = raw_fut - debiased_fut
     bias = bias.rename({'east_west' : 'west_east'})
     logger.info(bias)
     logger.info(f'Initial bias calculations complete for {var}.')
+
+    # Rechunk bias before taking min and max to prevent OOM kill
+    bias = bias.chunk({'time': -1, 'lat': 111, 'lon': 90})
 
     # Take the min and max over the entire time period at each location
     min_bias = bias.min(dim = ['time'])
@@ -792,25 +845,29 @@ def main(var, wrf_output_location, elevation = False):
         ele_save = elevation_data(wrf_output_location)
 
     # Open datasets
-    obs = xr.open_mfdataset(glob.glob(str(parent_dir / 'gridMET' / var / '*.nc')), combine = 'nested', concat_dim = 'time', preprocess = fix_time_coord).sortby('time')
-    raw = xr.open_mfdataset(glob.glob(str(parent_dir/ 'daily' / var / '*.nc')), combine = 'nested', concat_dim = 'time', preprocess = fix_time_coord).sortby('time')
+    obs_path = glob.glob(str(parent_dir / 'gridMET' / f'*{var}*.nc'))
+    obs = xr.open_dataset(obs_path[0], decode_times = False)
+
+    raw_path = glob.glob(str(parent_dir / 'daily' / f'*{var}*.nc'))
+    raw = xr.open_dataset(raw_path[0], decode_times = False)
+
     debiased_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*.nc'))
-    debiased = xr.open_dataset(debiased_path[0])
+    debiased = xr.open_dataset(debiased_path[0], decode_times = False)
 
     # Set location of interest as SLC airport
     lat = 40.788
     lon = -111.978
 
     # Test Plots
-    # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True)
+    scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True)
     # trend = trend_plt(var, obs, raw, debiased, save = True)
 
     # CDF plots for SLC Airport
     # cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True)
     
-    # seasonal = seasonal_bias(var, raw, debias, save = False)
+    # seasonal = seasonal_bias(var, raw, debiased, save = False)
     # bias_map = min_n_max_bias(var, raw, debiased, save = True)
-    bias = bias_scatter(var, raw, debiased, save = True)
+    # bias = bias_scatter(var, raw, debiased, save = True)
 
 # ======================
 # ---- Entry Point ----

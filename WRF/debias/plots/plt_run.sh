@@ -2,12 +2,12 @@
 
 #SBATCH --account=strong-kp
 #SBATCH --partition=strong-kp
-#SBATCH --job-name=scatterb
+#SBATCH --job-name=scattera
 #SBATCH --mem=50GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=scatterb.out    
-#SBATCH --error=scatterb.err
+#SBATCH --output=scattera.out    
+#SBATCH --error=scattera.err
  
 # Load in software
 module load miniforge3
