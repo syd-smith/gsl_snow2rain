@@ -1,4 +1,3 @@
-#%%
 """
 Author: Sydney Smith
 Date Created: August 25, 2026
@@ -32,40 +31,6 @@ from old.temporal_chunks import open_or_skip, get_fpaths
 sys.path.append(str(current_dir))
 from spatial_chunks import fix_time_coord
 
-var = 'tmmn'
-obs_path = glob.glob(str(parent_dir / 'gridMET' / f'*{var}*.nc'))
-ds = xr.open_dataset(obs_path[0], decode_times = False)
-ds = ds.mean(dim = 'east_west')
-
-lat = 40.788
-lon = -111.978
-
-# Select single array along time dim to reduce ds size
-lat_2d = ds[var].isel(time = 0, drop = True)
-lon_2d = ds[var].isel(time = 0, drop = True)
-
-# Find the vector distance from the coordinates passed to every coordinate pair on the dataset's grid
-dist = (lat_2d - (lat)) ** 2 + (lon_2d - (lon)) ** 2
-
-# Find the min distance and pull out its x and y index values
-dist_min = dist.argmin()
-logger.info(f'Point selected is {dist_min} from {lat}, {lon}.')
-y_idx, x_idx = np.unravel_index(dist_min, dist.shape)
-logger.info(f'Min distance is located at {x_idx}, {y_idx}.')
-
-# SPull grid's spatial dims dynamically
-spatial_dims = ds['lat'].dims
-
-# Select min distance grid point using isel
-point_data = ds.isel({
-    spatial_dims[0]: y_idx,
-    spatial_dims[1]: x_idx
-}).squeeze()
-
-logger.info(f'New lat: {float(point_data.lat.values[0][0])}')
-logger.info(f'New lon: {float(point_data.lon.values[0][0])}')
-
-#%%
 # ===================
 # - Set Up Logger - 
 # ===================
@@ -123,14 +88,14 @@ def loc_sel(ds, lat, lon):
     logger.info(f'Selecting nearest location to {lat}, {lon}.')
 
     # Select single array along time dim to reduce ds size
-    lat_2d = ds.isel(time = 0, drop = True)
-    lon_2d = ds.isel(time = 0, drop = True)
+    lat_2d = ds['lat'].isel(time = 0)
+    lon_2d = ds['lon'].isel(time = 0)
 
     # Find the vector distance from the coordinates passed to every coordinate pair on the dataset's grid
     dist = (lat_2d - (lat)) ** 2 + (lon_2d - (lon)) ** 2
 
     # Find the min distance and pull out its x and y index values
-    dist_min = np.argmin(dist)
+    dist_min = dist.argmin()
     logger.info(f'Point selected is {dist_min} from {lat}, {lon}.')
     y_idx, x_idx = np.unravel_index(dist_min, dist.shape)
     logger.info(f'Min distance is located at {x_idx}, {y_idx}.')
@@ -140,8 +105,8 @@ def loc_sel(ds, lat, lon):
 
     # Select min distance grid point using isel
     point_data = ds.isel({
-        spatial_dims[0]: y_idx,
-        spatial_dims[1]: x_idx
+        spatial_dims[1]: y_idx,
+        spatial_dims[2]: x_idx
     }).squeeze()
 
     logger.info(f'New lat: {float(point_data["lat"][0])}')
@@ -385,24 +350,25 @@ def calc_stat(data, var, stat = 'mean'):
         logger.info(f'Quantile value of {q_val} selected for {var}.')
 
         # Apply quantile function
-        dayOyear = data[var].quantile(q_val, dim = 'time')
+        dayOyear = data[var].quantile(q_val)
         logger.success(f'Quantile of {q_val} successfully calculated!')
 
     # Check for mean or median if stat specificed is not a float
     except (ValueError, TypeError):
         if stat == 'mean':
-            dayOyear = data[var].mean('time')
+            dayOyear = data[var].mean()
             logger.success('Mean of data successfully calculated!')
 
         elif stat == 'median':
-            dayOyear = data[var].median('time')
+            dayOyear = data[var].median()
             logger.success('Median of data successfully calculated!')
 
         else:
             logger.error(f'{stat} is not a valid statistic. Please choose from mean, median, or a float between 0 and 1.')
 
+    logger.info(f'calc_stat returns {float(dayOyear.values)}.')
     logger.info(f'Day of year {stat} complete for {var}.')
-    return spatial_avg
+    return float(dayOyear.values)
 
 def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save = False): 
     """
@@ -491,7 +457,7 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
     for i, stat in enumerate(stats):
 
         # Format dates to include only the month and day
-        formatted_dates = dates.strftime('%m-%d')
+        formatted_dates = list(dates.strftime('%m-%d'))
 
         # Plot scatter data
         ax[i].plot(
@@ -506,9 +472,9 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
         ax[i].plot(
             formatted_dates,
             stat_results[stat]['raw_hist'], 
-            'ro',
+            'r-.',
             alpha = 0.9, 
-            markersize = 3,
+            markersize = 10,
             label = 'Historical WRF Output'
         )
 
@@ -524,9 +490,9 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
         ax[i].plot(
             formatted_dates,
             stat_results[stat]['debiased_hist'], 
-            'go',
+            'g-.',
             alpha = 0.9, 
-            markersize = 3,
+            markersize = 10,
             label = 'Historical Debiased WRF'
         )
 
@@ -846,24 +812,24 @@ def main(var, wrf_output_location, elevation = False):
 
     # Open datasets
     obs_path = glob.glob(str(parent_dir / 'gridMET' / f'*{var}*.nc'))
-    obs = xr.open_dataset(obs_path[0], decode_times = False)
+    obs = xr.open_dataset(obs_path[0], decode_times = True)
 
     raw_path = glob.glob(str(parent_dir / 'daily' / f'*{var}*.nc'))
-    raw = xr.open_dataset(raw_path[0], decode_times = False)
+    raw = xr.open_dataset(raw_path[0], decode_times = True)
 
     debiased_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*.nc'))
-    debiased = xr.open_dataset(debiased_path[0], decode_times = False)
+    debiased = xr.open_dataset(debiased_path[0], decode_times = True)
 
     # Set location of interest as SLC airport
     lat = 40.788
     lon = -111.978
 
     # Test Plots
-    scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True)
+    # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True)
     # trend = trend_plt(var, obs, raw, debiased, save = True)
 
     # CDF plots for SLC Airport
-    # cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True)
+    cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True)
     
     # seasonal = seasonal_bias(var, raw, debiased, save = False)
     # bias_map = min_n_max_bias(var, raw, debiased, save = True)
@@ -875,7 +841,7 @@ def main(var, wrf_output_location, elevation = False):
 
 if __name__ == '__main__':
     main(
-        var = 'tmmn', 
+        var = 'tmmx', 
         wrf_output_location = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014'
     )
 

@@ -108,6 +108,7 @@ def convert_pr(ds, output_units):
     else:
         logger.error(f'{output_units} is an invalid output for this function. Units must be mm/day or kg m-2 s-1.')
 
+    logger.success('Precipitation conversion success!')
     return conversion
 
 def convert_wind(u, v, speed):
@@ -192,29 +193,18 @@ def debiaser_setup(var):
     Setup debiaser using xr.apply_ufunc to process each location along a timeseries. This 
     requires lazy loading all of the data first before applying the debiaser.
     """
-    # Define a chunking scheme to help dask while processing large datasets
-    chunks = {
-        'time': -1,       # -1 means "keep the entire time dimension intact in a single chunk"
-        'lat': 20,        # Size of your spatial block (adjust based on grid size)
-        'lon': 20         # Size of your spatial block
-    }
+    # Define paths 
+    obs_path = current_dir / 'gridMET'
+    model_path = current_dir / 'daily'
 
     if var == 'wind':
-        # Define paths for u component of wind
-        u_obs_path = current_dir / 'gridMET' / 'uas'
-        u_model_path = current_dir / 'daily' / 'uas'
+        # Open datasets lazily to not overload memory
+        u_obs = xr.open_dataset(next(obs_path.glob(f'*{var}*.nc')), decode_times = True)
+        u_model = xr.open_dataset(next(model_path.glob(f'*{var}*.nc')), decode_times = True)
 
         # Open datasets lazily to not overload memory
-        u_obs = xr.open_mfdataset(glob.glob(str(u_obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
-        u_model = xr.open_mfdataset(glob.glob(str(u_model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
-
-        # Define paths for v component of wind
-        v_obs_path = current_dir / 'gridMET' / 'vas'
-        v_model_path = current_dir / 'daily' / 'vas'
-
-        # Open datasets lazily to not overload memory
-        v_obs = xr.open_mfdataset(glob.glob(str(v_obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
-        v_model = xr.open_mfdataset(glob.glob(str(v_model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
+        v_obs = xr.open_dataset(next(obs_path.glob(f'*{var}*.nc')), decode_times = True)
+        v_model = xr.open_dataset(next(model_path.glob(f'*{var}*.nc')), decode_times = True)
         
         # Combine u and v components into magnitude
         # TODO: If mpcalc throws errors because of dask chunking just perform calculations using simple python operations
@@ -225,13 +215,9 @@ def debiaser_setup(var):
         hist = model.sel(time = slice('1985-01-01', '2014-12-31'))
   
     else:
-        # Define paths for observation and model data
-        obs_path = current_dir / 'gridMET' / var
-        model_path = current_dir / 'daily' / var
-
         # Open datasets lazily to not overload memory
-        obs = xr.open_mfdataset(glob.glob(str(obs_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
-        model = xr.open_mfdataset(glob.glob(str(model_path / '*.nc')), combine = 'nested', concat_dim = 'time', chunks = chunks, preprocess = fix_time_coord).sortby('time')
+        obs = xr.open_dataset(next(obs_path.glob(f'*{var}*.nc')), decode_times = True)
+        model = xr.open_dataset(next(model_path.glob(f'*{var}*.nc')), decode_times = True)
         
         # Isolate model istorical period
         hist = model.sel(time = slice('1985-01-01', '2014-12-31'))
@@ -326,66 +312,66 @@ def main(variable, domain, WRF_in, MET_in, debias = True):
     else:
         variables = [variable]
 
-    for var in variables:
-        # TODO: log errors if the workflow isn't completed sequentially
-        # Generate list of WRF input files
-        files = get_fpaths(WRF_in, domain)
+    # for var in variables:
+    #     # TODO: log errors if the workflow isn't completed sequentially
+    #     # Generate list of WRF input files
+    #     files = get_fpaths(WRF_in, domain)
         
-        # Set to full historical period
-        for year in range(1985, 2015):
-            # Call and interpolate gridMET data (obs) for the given year 
-            MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
+    #     # Set to full historical period
+    #     for year in range(1985, 2015):
+    #         # Call and interpolate gridMET data (obs) for the given year 
+    #         MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
 
-            # Save year of interpolated gridMET data
-            save_data = data_saver(MET_data, 'gridMET', var, year)
+    #         # Save year of interpolated gridMET data
+    #         save_data = data_saver(MET_data, 'gridMET', var, year)
 
-        # Combine all gridMET files into a single file with context manager
-        with xr.open_mfdataset(
-            glob.glob(str(current_dir / 'gridMET' / var / '*.nc')), 
-            combine = 'nested', 
-            concat_dim = 'time', 
-            preprocess = fix_time_coord
-            ) as gridmet_open:
+    #     # Combine all gridMET files into a single file with context manager
+    #     with xr.open_mfdataset(
+    #         glob.glob(str(current_dir / 'gridMET' / var / '*.nc')), 
+    #         combine = 'nested', 
+    #         concat_dim = 'time', 
+    #         preprocess = fix_time_coord
+    #         ) as gridmet_open:
 
-            # Write file to netcdf
-            gridmet_open.sortby('time').to_netcdf(current_dir / 'gridMET' / f'gridMET_GSLBIP_{var}.nc')
+    #         # Write file to netcdf
+    #         gridmet_open.sortby('time').to_netcdf(current_dir / 'gridMET' / f'gridMET_GSLBIP_{var}.nc')
         
-        logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
+    #     logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
 
-        # Set to historical + future period
-        for year in range(1985, 2100):
-            # Create date range using pandas
-            # TODO: set to dates for full year
-            dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
+    #     # Set to historical + future period
+    #     for year in range(1985, 2100):
+    #         # Create date range using pandas
+    #         # TODO: set to dates for full year
+    #         dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
 
-            for day in dates:
-                if day == dates[0]:
-                    # Set the day you want to be working with to today
-                    today = day.strftime('%Y-%m-%d') # Turn day in to usable date string 
-                    continue
+    #         for day in dates:
+    #             if day == dates[0]:
+    #                 # Set the day you want to be working with to today
+    #                 today = day.strftime('%Y-%m-%d') # Turn day in to usable date string 
+    #                 continue
 
-                else:
-                    # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
-                    tomorrow = day.strftime('%Y-%m-%d')
+    #             else:
+    #                 # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
+    #                 tomorrow = day.strftime('%Y-%m-%d')
 
-                    # Create clean file of daily WRF data
-                    daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
+    #                 # Create clean file of daily WRF data
+    #                 daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
 
-                    # Set tomorrow as the new today to move on to the next series
-                    today = tomorrow
+    #                 # Set tomorrow as the new today to move on to the next series
+    #                 today = tomorrow
         
-        # Combine all cleaned WRF files into a single file using context manager
-        with xr.open_mfdataset(
-            glob.glob(str(current_dir / 'daily' / var / '*.nc')), 
-            combine = 'nested', 
-            concat_dim = 'time', 
-            preprocess = fix_time_coord
-            ) as wrf_open:
+    #     # Combine all cleaned WRF files into a single file using context manager
+    #     with xr.open_mfdataset(
+    #         glob.glob(str(current_dir / 'daily' / var / '*.nc')), 
+    #         combine = 'nested', 
+    #         concat_dim = 'time', 
+    #         preprocess = fix_time_coord
+    #         ) as wrf_open:
 
-            # Write file to netcdf
-            wrf_open.sortby('time').to_netcdf(current_dir / 'daily' / f'wrf_raw_GSLBIP_multimodel_ssp245_{var}.nc')
+    #         # Write file to netcdf
+    #         wrf_open.sortby('time').to_netcdf(current_dir / 'daily' / f'wrf_raw_GSLBIP_multimodel_ssp245_{var}.nc')
 
-        logger.success(f'WRF files successfully cleaned and saved for {var}!')
+    #     logger.success(f'WRF files successfully cleaned and saved for {var}!')
 
     if debias:
         # Apply debiaser to data
@@ -404,6 +390,7 @@ if __name__ == '__main__':
     # Track program time in log files
     start = time.perf_counter()
     logger.info('Beginning execution.')
+    logger.info('No chunker.')
 
     # Only inputs required
     main(

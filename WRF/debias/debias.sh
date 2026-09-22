@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH --account=strong-kp
-#SBATCH --partition=strong-kp
+#SBATCH --account=dtn
+#SBATCH --partition=notchpeak-dtn
 #SBATCH --job-name=tmmx
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
