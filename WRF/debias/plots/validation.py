@@ -234,6 +234,24 @@ def running_window_slice(data, date, window_length = 31):
 
     return window
 
+def cdf_mask(data):
+    """
+    Mask out long tails in cdf data.
+    """
+    # Generate mask with bounds at 1% and 99%
+    mask = (data.y >= 0.01) & (data.y <= 0.99)
+
+    # Apply to data if mask is generated
+    if mask.any():
+        masked_x = data.x.where(mask, drop = True)
+        masked_y = data.y.where(mask, drop = True)
+        return masked_x, masked_y
+
+    # Otherwise log error
+    else:
+        logger.error('Failed to generate mask for data.')
+        return
+
 def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
     """
     Create a plot of the cumulative distribution function for each of the given datasets.
@@ -282,31 +300,38 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
         debiased_fut_cdf = ECDF(debiased_window_fut[var].values.flatten())
         logger.info(f'CDFs calculated for {date}.')
 
+        # Mask CDF outputs
+        obs_x, obs_y = cdf_masked(obs_cdf)
+        raw_hist_x, raw_hist_y = cdf_masked(raw_hist_cdf)
+        raw_fut_x, raw_fut_y = cdf_masked(raw_fut_cdf)
+        debiased_hist_x, debiased_hist_y = cdf_masked(debiased_hist_cdf)
+        debiased_fut_x, debiased_fut_y = cdf_masked(debiased_fut_cdf)
+
         # Plot CDFs
         ax[i].plot(
-            obs_cdf.x, 
-            obs_cdf.y, 
-            'k-.',
+            obs_x, 
+            obs_y, 
+            'k-',
             label = 'Observations'
         )
 
         ax[i].plot(
-            raw_hist_cdf.x,
-            raw_hist_cdf.y,
+            raw_hist_x,
+            raw_hist_y,
             'r-.',
             label = 'Historical WRF Output'
         )
 
         ax[i].plot(
-            raw_fut_cdf.x, 
-            raw_fut_cdf.y, 
+            raw_fut_x, 
+            raw_fut_y, 
             'r-',
             label = 'Future WRF Output'
         )
 
         ax[i].plot(
-            debiased_hist_cdf.x,
-            debiased_hist_cdf.y,
+            debiased_hist_x,
+            debiased_hist_y,
             'g-.',
             label = 'Historical Debiased WRF'
         )
@@ -515,7 +540,7 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
 
         # Set x axis labels and tick labels
         ax[i].set_xlabel('Day of Year')
-        ax[i].set_xticks(labels = ['01-01', '02-01', '03-01', '04-01', '05-01', '06-01', '07-01', '08-01', '09-01', '10-01', '11-01', '12-01', ''])
+        ax[i].set_xticks(['01-01', '02-01', '03-01', '04-01', '05-01', '06-01', '07-01', '08-01', '09-01', '10-01', '11-01', '12-01'])
         ax[i].tick_params(axis = 'x', rotation = 45)
 
         # Log what stat was added
@@ -668,6 +693,8 @@ def min_n_max_bias(var, raw, debiased, save = False):
         logger.error('Elevation data not found. Check that elevation_data() saved data to wrfout directory.')
         return
 
+    # TODO: add elevation contours
+
     # Open elevation data
     ele_ds = xr.open_dataset(ele_path[0])
 
@@ -682,7 +709,7 @@ def min_n_max_bias(var, raw, debiased, save = False):
     logger.info(f'Initial bias calculations complete for {var}.')
 
     # Rechunk bias before taking min and max to prevent OOM kill
-    bias = bias.chunk({'time': -1, 'lat': 111, 'lon': 90})
+    bias = bias.chunk({'time': 365, 'lat': 111, 'lon': 90})
 
     # Take the min and max over the entire time period at each location
     min_bias = bias.min(dim = ['time'])
@@ -827,14 +854,14 @@ def main(var, wrf_output_location, elevation = False):
     lon = -111.978
 
     # Test Plots
-    # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True)
+    # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True) # ax.set_xtick labels threw error from improper syntax
     # trend = trend_plt(var, obs, raw, debiased, save = True)
 
     # CDF plots for SLC Airport
-    # cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True)
+    cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True) # Added masking for long tails (check for success)
     
     # seasonal = seasonal_bias(var, raw, debiased, save = False)
-    bias_map = min_n_max_bias(var, raw, debiased, save = True)
+    # bias_map = min_n_max_bias(var, raw, debiased, save = True) # OOM kill (chunking didn't work might need to try mannual chunking)
     # bias = bias_scatter(var, raw, debiased, save = True)
 
 # ======================
