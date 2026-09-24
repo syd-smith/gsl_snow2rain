@@ -222,10 +222,10 @@ def running_window_slice(data, date, window_length = 31):
     logger.info(f'Half window size: {half_window}')
 
     # Select bounds of the running window
-    start_month = (data.sel(time = date)['time'].values + pd.Timedelta(days = -half_window)).month
-    start_day = (data.sel(time = date)['time'].values + pd.Timedelta(days = -half_window)).day
-    stop_month = (data.sel(time = date)['time'].values + pd.Timedelta(days = half_window)).month
-    stop_day = (data.sel(time = date)['time'].values + pd.Timedelta(days = half_window)).day
+    start_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).month
+    start_day = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).day
+    stop_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = half_window)).month
+    stop_day = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = half_window)).day
 
     # Slice data to running window
     window = data.sel(time = (data.time.dt.month == start_month) & (data.time.dt.day >= start_day) | (data.time.dt.month == stop_month) & (data.time.dt.day <= stop_day))
@@ -260,7 +260,7 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
     raw_sel = loc_sel(raw, lat, lon)
     debiased_sel = loc_sel(debiased, lat, lon)
 
-    for date in dates:
+    for i, date in enumerate(dates):
         # Slice dataset down to a given window size centered on date
         # Default window size is 31 days
         window_size = 31
@@ -275,55 +275,57 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
         debiased_window_fut = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(2015, 2100)))
 
         # Calculate a CDF for each array
-        obs_cdf = ECDF(obs_window)
-        raw_hist_cdf = ECDF(raw_window_hist)
-        raw_fut_cdf = ECDF(raw_window_fut)
-        debiased_hist_cdf = ECDF(debiased_window_hist)
-        debiased_fut_cdf = ECDF(debiased_window_fut)
+        obs_cdf = ECDF(obs_window[var].values.flatten())
+        raw_hist_cdf = ECDF(raw_window_hist[var].values.flatten())
+        raw_fut_cdf = ECDF(raw_window_fut[var].values.flatten())
+        debiased_hist_cdf = ECDF(debiased_window_hist[var].values.flatten())
+        debiased_fut_cdf = ECDF(debiased_window_fut[var].values.flatten())
         logger.info(f'CDFs calculated for {date}.')
 
         # Plot CDFs
-        ax.plot(
+        ax[i].plot(
             obs_cdf.x, 
             obs_cdf.y, 
-            'k-',
+            'k-.',
             label = 'Observations'
         )
 
-        ax.plot(
+        ax[i].plot(
             raw_hist_cdf.x,
             raw_hist_cdf.y,
-            'ro',
+            'r-.',
             label = 'Historical WRF Output'
         )
 
-        ax.plot(
+        ax[i].plot(
             raw_fut_cdf.x, 
             raw_fut_cdf.y, 
             'r-',
             label = 'Future WRF Output'
         )
 
-        ax.plot(
+        ax[i].plot(
             debiased_hist_cdf.x,
-            debiased_fut_cdf.y,
-            'go',
+            debiased_hist_cdf.y,
+            'g-.',
             label = 'Historical Debiased WRF'
         )
 
-        ax.plot(
-            debiased_cdf.x, 
-            debiased_cdf.y, 
+        ax[i].plot(
+            debiased_fut_cdf.x, 
+            debiased_fut_cdf.y, 
             'g-',
             label = 'Future Debiased WRF'
         )
 
         # Adjust plot format settings for each subplot
-        ax.set_title(date)
-        ax.set_ylabel('Percentile')
-        ax.set_xlabel(f'{var} ({units[var]})')
-        ax.grid(True, linestyle = '--', alpha = 0.5)
-        ax.legend(frameon = True)
+        ax[i].set_title(date)
+        ax[i].set_ylabel('Percentile')
+        ax[i].set_xlabel(f'{var} ({units[var]})')
+        ax[i].grid(True, linestyle = '--', alpha = 0.5)
+        ax[i].legend(frameon = True)
+
+        logger.info(f'Plotting completed for {date}.')
 
     # Global plot settings
     fig.suptitle(f'CDFs of {title[var]} Data - {window_size} Day Window')
@@ -829,10 +831,10 @@ def main(var, wrf_output_location, elevation = False):
     # trend = trend_plt(var, obs, raw, debiased, save = True)
 
     # CDF plots for SLC Airport
-    cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True)
+    # cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True)
     
     # seasonal = seasonal_bias(var, raw, debiased, save = False)
-    # bias_map = min_n_max_bias(var, raw, debiased, save = True)
+    bias_map = min_n_max_bias(var, raw, debiased, save = True)
     # bias = bias_scatter(var, raw, debiased, save = True)
 
 # ======================

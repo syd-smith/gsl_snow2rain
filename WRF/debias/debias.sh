@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH --account=dtn
-#SBATCH --partition=notchpeak-dtn
+#SBATCH --account=uspcasw-np
+#SBATCH --partition=uspcasw-np
 #SBATCH --job-name=tmmx
 #SBATCH --mem=20GB
 #SBATCH --nodes=1

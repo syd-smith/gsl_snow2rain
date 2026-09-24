@@ -1,13 +1,14 @@
 #!/bin/bash
 
-#SBATCH --account=dtn
-#SBATCH --partition=notchpeak-dtn
-#SBATCH --job-name=scattera
+#SBATCH --account=uspcasw-np
+#SBATCH --partition=uspcasw-np
+#SBATCH --job-name=cdf
+#SBATCH --time=1-00:00:00
 #SBATCH --mem=50GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=scattera.out    
-#SBATCH --error=scattera.err
+#SBATCH --output=cdf.out    
+#SBATCH --error=cdf.err
  
 # Load in software
 module load miniforge3
