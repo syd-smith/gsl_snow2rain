@@ -402,7 +402,7 @@ if __name__ == '__main__':
         )
 
     # Report of runtime at completion 
-    logger.success(f'Debiasing process completed for {variable}!')
+    logger.success(f'Debiasing process completed!')
     logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
 
     # Force script to stop running once code is finished

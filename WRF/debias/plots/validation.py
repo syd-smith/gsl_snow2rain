@@ -234,17 +234,23 @@ def running_window_slice(data, date, window_length = 31):
 
     return window
 
-def cdf_mask(data):
+def cdf_masked(data):
     """
     Mask out long tails in cdf data.
     """
+    logger.info(f'Data.x before masking: {data.x}')
+    logger.info(f'Data.y before masking: {data.y}')
+
     # Generate mask with bounds at 1% and 99%
     mask = (data.y >= 0.01) & (data.y <= 0.99)
 
     # Apply to data if mask is generated
     if mask.any():
-        masked_x = data.x.where(mask, drop = True)
-        masked_y = data.y.where(mask, drop = True)
+        masked_x = data.x[mask]
+        masked_y = data.y[mask]
+
+        logger.info(f'Data.x after masking: {masked_x}')
+        logger.info(f'Data.y after masking: {masked_y}')
         return masked_x, masked_y
 
     # Otherwise log error
@@ -337,8 +343,8 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
         )
 
         ax[i].plot(
-            debiased_fut_cdf.x, 
-            debiased_fut_cdf.y, 
+            debiased_fut_x, 
+            debiased_fut_y, 
             'g-',
             label = 'Future Debiased WRF'
         )
@@ -348,12 +354,11 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
         ax[i].set_ylabel('Percentile')
         ax[i].set_xlabel(f'{var} ({units[var]})')
         ax[i].grid(True, linestyle = '--', alpha = 0.5)
-        ax[i].legend(frameon = True)
-
         logger.info(f'Plotting completed for {date}.')
 
     # Global plot settings
-    fig.suptitle(f'CDFs of {title[var]} Data - {window_size} Day Window')
+    handles, labels = ax[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc = 'upper left', bbox_to_anchor = (0.95, 0.95), frameon = True)
     plt.tight_layout()
     plt.show()
     logger.info(f'CDF plot complete for {var}.')
@@ -490,8 +495,8 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
         ax[i].plot(
             formatted_dates,
             stat_results[stat]['obs'], 
-            'ko',
-            alpha = 0.3, 
+            'k-',
+            alpha = 0.9, 
             markersize = 10,
             label = 'Observations'
         )
@@ -508,8 +513,8 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
         ax[i].plot(
             formatted_dates, 
             stat_results[stat]['raw_fut'], 
-            'ro',
-            alpha = 0.3,
+            'r-',
+            alpha = 0.9,
             markersize = 10,
             label = 'Future WRF Output'
         )
@@ -526,8 +531,8 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
         ax[i].plot(
             formatted_dates,
             stat_results[stat]['debiased_fut'],
-            'go',
-            alpha = 0.3,
+            'g-',
+            alpha = 0.9,
             markersize = 10,
             label = 'Future Debiased WRF'
         )
@@ -536,7 +541,6 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
         ax[i].set_title(f'{stat}')
         ax[i].set_ylabel(f'{var} ({units[var]})')
         ax[i].grid(True, linestyle = '--', alpha = 0.5)
-        ax[i].legend(frameon = True)
 
         # Set x axis labels and tick labels
         ax[i].set_xlabel('Day of Year')
@@ -547,7 +551,8 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
         logger.info(f'Scatter plot for {stat} of {var} completed!')
 
     # Global settings for figure
-    fig.suptitle(f'Mean Annual Cycle of {title[var]} Across Study Region')
+    handles, labels = ax[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc = 'upper left', bbox_to_anchor = (0.95, 0.95), frameon = True)
     plt.tight_layout()
     plt.show()
     logger.info(f'Annual scatter plot complete for {var}.')
@@ -555,7 +560,7 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
     # Opt to save image to sub directory
     if save:
         stat_str = '_'.join(map(str, stats)) # Pull out items from stat to add to filename
-        save_path = current_dir / 'figures' / f'annual_scatter_{var}_{stat_str}_lat:{float(debiased_sel["lat"][0]):.2f}_lon:{float(debiased_sel["lon"][0]):.2f }.png' # Save using actual lat and lon values used
+        save_path = current_dir / 'figures' / f'annual_scatter_{var}_{stat_str}_lat:{float(debiased_sel["lat"][0]):.2f}_lon:{float(debiased_sel["lon"][0]):.2f}.png' # Save using actual lat and lon values used
         plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Annual scatter plot saved to: {save_path}')
 
@@ -698,45 +703,67 @@ def min_n_max_bias(var, raw, debiased, save = False):
     # Open elevation data
     ele_ds = xr.open_dataset(ele_path[0])
 
-    # Trim datasets to future period only
-    raw_fut = raw.sel(time = slice('2014-01-01', '2099-12-31'))
-    debiased_fut = debiased.sel(time = slice('2014-01-01', '2099-12-31'))
+    for year in range(1985, 2100):
+        logger.info(f'Calculating extremes for {year}.')
+        # Isolate one year of data at a time
+        raw_yr = raw.sel(time = slice(f'{year}-01-01', f'{year}-12-31'))
+        debiased_yr = debiased.sel(time = slice(f'{year}-01-01', f'{year}-12-31'))
 
-    # Calculate the bias
-    bias = raw_fut - debiased_fut
-    bias = bias.rename({'east_west' : 'west_east'})
-    logger.info(bias)
-    logger.info(f'Initial bias calculations complete for {var}.')
+        # Calculate the bias and take the min and max
+        bias = raw_yr - debiased_yr
+        bias_min = bias.min(dim = 'time')
+        bias_max = bias.max(dim = 'time')
+        logger.info(f'Min for {year}: {bias_min[var]}')
+        logger.info(f'Max for {year}: {bias_max[var]}')
 
-    # Rechunk bias before taking min and max to prevent OOM kill
-    bias = bias.chunk({'time': 365, 'lat': 111, 'lon': 90})
+        if year == 1985:
+            # Skip combining the first year of data (there's nothing to combine it with)
+            min_all = bias_min
+            max_all = bias_max
 
-    # Take the min and max over the entire time period at each location
-    min_bias = bias.min(dim = ['time'])
-    max_bias = bias.max(dim = ['time'])
+        else:
+            # Combine datasets together on a new dim
+            min_concat = xr.concat([min_all, bias_min], dim = 'year')
+            max_concat = xr.concat([max_all, bias_max], dim = 'year')
+
+            # Take the min of the new combined dataset (this will cause the values that are not most extreme to be left behind)
+            min_all = min_concat.min(dim = 'year')
+            max_all = max_concat.max(dim = 'year')
+
+        logger.info(f'Overall min: {min_all[var]}')
+        logger.info(f'Overall max: {max_all[var]}')
+
+        # Close out of that years worth of data
+        bias_min.close()
+        bias_max.close()
+
+    # Log once calculations are complete
+    logger.info('Min and max calculations complete! Starting plotting.')
+
+    # Pull out lat and lon values
+    lons = min_all['lon'].values
+    lats = min_all['lat'].values
 
     # Plot data
-    min = min_bias[var].plot.pcolormesh(
-        ax = ax[0], 
-        x = 'lon',
-        y = 'lat',
+    min_plot = ax[0].pcolormesh(
+        lons, lats,
+        min_all[var].values,
         transform = wrf_proj, 
         cmap = cmap('GMT_ocean', revBool = True),
         shading = 'nearest'
     )
 
-    max = max_bias[var].plot.pcolormesh(
-        ax = ax[1],
-        x = 'lon',
-        y = 'lat',
+    max_plot = ax[1].pcolormesh(
+        lons, lats, 
+        max_all[var].values,
         transform = wrf_proj,
         cmap = cmap('MPL_afmhot', revBool = True),
         shading = 'nearest'
         )
 
     # Add colorbars
-    fig.colorbar(min, ax = ax[0], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})', shrink = 0.7)
-    fig.colorbar(max, ax = ax[1], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})', shrink = 0.7)
+    fig.colorbar(min_plot, ax = ax[0], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})', shrink = 0.7)
+    fig.colorbar(max_plot, ax = ax[1], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})', shrink = 0.7)
 
     # Add lakes to maps
     lakes = cfeature.NaturalEarthFeature(category = 'physical', name = 'lakes', scale = '50m', facecolor = 'none', edgecolor = 'k')
@@ -744,8 +771,10 @@ def min_n_max_bias(var, raw, debiased, save = False):
     ax[1].add_feature(lakes, linewidth = 1.5)
 
     # Add letter labels to sub plots
-    ax[0].text(0.02, 0.88, 'a.', fontsize = 60, transform = ax[0].transAxes)
-    ax[1].text(0.02, 0.88, 'b.', fontsize = 60, transform = ax[1].transAxes)
+    ax[0].text(0.02, 0.88, 'a.', fontsize = 10, transform = ax[0].transAxes)
+    ax[1].text(0.02, 0.88, 'b.', fontsize = 10, transform = ax[1].transAxes)
+
+    logger.success('Plots completed!')
 
     # Opt to save image to sub directory
     if save:
@@ -753,7 +782,7 @@ def min_n_max_bias(var, raw, debiased, save = False):
         plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Bias map saved to: {save_path}')
 
-def seasonal_bias(var, raw, debias, save = False):
+def seasonal_bias(var, raw, debiased, save = False):
     """
     Creates a map of averaged monthly biases. Each subplot corresponds with a season.
     """
@@ -854,11 +883,11 @@ def main(var, wrf_output_location, elevation = False):
     lon = -111.978
 
     # Test Plots
-    # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True) # ax.set_xtick labels threw error from improper syntax
+    # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True) 
     # trend = trend_plt(var, obs, raw, debiased, save = True)
 
     # CDF plots for SLC Airport
-    cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True) # Added masking for long tails (check for success)
+    cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True) 
     
     # seasonal = seasonal_bias(var, raw, debiased, save = False)
     # bias_map = min_n_max_bias(var, raw, debiased, save = True) # OOM kill (chunking didn't work might need to try mannual chunking)
@@ -868,9 +897,15 @@ def main(var, wrf_output_location, elevation = False):
 # ---- Entry Point ----
 # ======================
 
-if __name__ == '__main__':
-    main(
-        var = 'tmmx', 
-        wrf_output_location = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014'
-    )
+# if __name__ == '__main__':
+#     main(
+#         var = 'tmmx', 
+#         wrf_output_location = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014'
+#     )
 
+var = 'tmmx'
+
+
+debiased_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*.nc'))
+debiased = xr.open_dataset(debiased_path[0], decode_times = True)
+print(debiased.min())
