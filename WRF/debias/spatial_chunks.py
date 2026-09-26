@@ -188,7 +188,20 @@ def apply_debiaser(var, obs, hist, fut):
 
     return debiased_data
 
-def debiaser_setup(var): 
+def array_flatten(ds, var):
+
+    # Pull size of the dataset's time dimension
+    ntime = ds[var].sizes['time']
+
+    # Pull shape of lat and lon dimensions
+    ny, nx = ds[var].shape[1], ds[var].shape[2] 
+
+    # Extract values and reshape from (time, lat, lon) to (time, space)
+    ds_flat = ds[var].values.reshape(ntime, -1)
+
+    return ds_flat, ntime, ny, nx
+
+def debiaser_setup(var, time_period = 'future'): 
     """
     Setup debiaser using xr.apply_ufunc to process each location along a timeseries. This 
     requires lazy loading all of the data first before applying the debiaser.
@@ -210,6 +223,12 @@ def debiaser_setup(var):
         # TODO: If mpcalc throws errors because of dask chunking just perform calculations using simple python operations
         obs = mpcalc.wind_speed(u_obs, v_obs)
         model = mpcalc.wind_speed(u_model, v_model)
+
+        # Close out of unecessary datasets
+        u_obs.close()
+        u_model.close()
+        v_obs.close()
+        v_model.close()
         
         # Isolate model historical period
         hist = model.sel(time = slice('1985-01-01', '2014-12-31'))
@@ -222,28 +241,55 @@ def debiaser_setup(var):
         # Isolate model istorical period
         hist = model.sel(time = slice('1985-01-01', '2014-12-31'))
 
+    if time_period == 'future':
+        # Select future period from model
+        input = model.sel(time = slice('2015-01-01', '2099-12-31'))
+
+    elif time_period == 'historical':
+        # Set histoircal period as input data
+        input = hist
+
+    # Close out of other dataset
+    model.close()
+
     # Log success of data load
     logger.success('Lazy loaded all datasets for debiasing.')
+
+
+
+    ntime = model[var].sizes['time']
+    # Let's say your spatial dimensions are named 'lat' and 'lon' as dimensions:
+    ny, nx = model[var].shape[1], model[var].shape[2] 
+
+    # 2. Extract values and reshape from (time, lat, lon) to (time, space)
+    model_flat = model[var].values.reshape(ntime, -1)
+
+
+
 
     # Extract data from xr.dataset as numpy arrays
     obs_vals = obs[var].values
     hist_vals = hist[var].values
-    model_vals = model[var].values
+    input_vals = input[var].values
 
     # Apply debiaser at all locations (location handling is done by ibicus library)
-    debiased = apply_debiaser(var, obs_vals, hist_vals, model_vals)
+    debiased = apply_debiaser(var, obs_vals, hist_vals, input_vals)
     logger.info(debiased)
 
     # Consider apply_ufunc only if built in location looping seems unable to handle the size of the dataset
     logger.info('Exited out of apply_debiaser. On to saving data!')
 
     # Ensure that the debiased data is the same shape as the future dataset
-    assert debiased.shape == model[var].shape or logger.error('Debiased dataset is not the same shape as the model dataset for xarray reconstruction.')
-    
+    assert debiased.shape == input[var].shape or logger.error('Debiased dataset is not the same shape as the model dataset for xarray reconstruction.')
+
+    # Reshape back to the original 2D grid shape: (time, lat, lon)
+    ds_reshaped = debiased.reshape(ntime, ny, nx)
+
     # Reconstruct xr.dataset using model's metadata
     # Build out fut and hist datasets separately first
-    ds_debiased = model.copy(deep = True)
-    ds_debiased[var].values = debiased
+    ds_debiased = input.copy(deep = True)
+    ds_debiased[var].values = ds_reshaped
+
     logger.info(ds_debiased)
     logger.success('Dataset reconstructed!')
     
@@ -259,7 +305,7 @@ def debiaser_setup(var):
         ds_debiased = convert_pr(ds_debiased, 'mm/day')
 
         # Generate save name for debiased data
-        out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}.nc')
+        out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_{time_period}.nc')
 
         # Save data to netCDF file
         ds_debiased.to_netcdf(out_path)
@@ -278,7 +324,7 @@ def debiaser_setup(var):
         # Save both wind component separately
         for variable, result in zip(variables, results):
             # Generate save name for debiased data
-            out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{variable}.nc')
+            out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{variable}_{time_period}.nc')
 
             # Save data to netCDF file
             result.to_netcdf(out_path)
@@ -289,7 +335,7 @@ def debiaser_setup(var):
 
     else:
         # Generate save name for debiased data
-        out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}.nc')
+        out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_{time_period}.nc')
 
         # Save data to netCDF file
         ds_debiased.to_netcdf(out_path)
@@ -375,7 +421,8 @@ def main(variable, domain, WRF_in, MET_in, debias = True):
 
     if debias:
         # Apply debiaser to data
-        debiased_fut = debiaser_setup(variable)
+        debiased_fut = debiaser_setup(variable, time_period = 'fututre')
+        debiased_hist = debiaser_setup(variable, time_period = 'historical')
 
 # ======================
 # ---- Entry Point ----
@@ -394,7 +441,7 @@ if __name__ == '__main__':
 
     # Only inputs required
     main(
-        variable = 'tmmx',
+        variable = 'tmmn',
         domain = '03',
         WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/', 
         MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/',
