@@ -12,6 +12,7 @@ import os
 import pandas as pd
 from pathlib import Path
 import sys
+import time
 import xarray as xr
 
 # ==================================
@@ -230,7 +231,7 @@ def running_window_slice(data, date, window_length = 31):
     # Slice data to running window
     window = data.sel(time = (data.time.dt.month == start_month) & (data.time.dt.day >= start_day) | (data.time.dt.month == stop_month) & (data.time.dt.day <= stop_day))
     logger.info(window)
-    logger.info(f'Data sliced to running window for {date}.')
+    logger.info(f'Data sliced to {window_length} day running window for {date}.')
 
     return window
 
@@ -897,15 +898,21 @@ def main(var, wrf_output_location, elevation = False):
 # ---- Entry Point ----
 # ======================
 
-# if __name__ == '__main__':
-#     main(
-#         var = 'tmmx', 
-#         wrf_output_location = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014'
-#     )
+if __name__ == '__main__':
+    # Track program time in log files
+    start = time.perf_counter()
+    logger.info('Beginning execution.')
+    logger.info('No chunker.')
 
-var = 'tmmx'
+    # Only inputs required
+    main(
+        var = 'tmmx', 
+        wrf_output_location = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014'
+    )
 
+    # Report of runtime at completion 
+    logger.success(f'Debiasing process completed!')
+    logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
 
-debiased_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*.nc'))
-debiased = xr.open_dataset(debiased_path[0], decode_times = True)
-print(debiased.min())
+    # Force script to stop running once code is finished
+    sys.exit(0)

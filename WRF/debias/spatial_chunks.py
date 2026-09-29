@@ -188,19 +188,6 @@ def apply_debiaser(var, obs, hist, fut):
 
     return debiased_data
 
-def array_flatten(ds, var):
-
-    # Pull size of the dataset's time dimension
-    ntime = ds[var].sizes['time']
-
-    # Pull shape of lat and lon dimensions
-    ny, nx = ds[var].shape[1], ds[var].shape[2] 
-
-    # Extract values and reshape from (time, lat, lon) to (time, space)
-    ds_flat = ds[var].values.reshape(ntime, -1)
-
-    return ds_flat, ntime, ny, nx
-
 def debiaser_setup(var, time_period = 'future'): 
     """
     Setup debiaser using xr.apply_ufunc to process each location along a timeseries. This 
@@ -249,23 +236,15 @@ def debiaser_setup(var, time_period = 'future'):
         # Set histoircal period as input data
         input = hist
 
+    else: 
+        logger.error('Incorrect time_period selection. Please choose future or historical.')
+        return
+
     # Close out of other dataset
     model.close()
 
     # Log success of data load
     logger.success('Lazy loaded all datasets for debiasing.')
-
-
-
-    ntime = model[var].sizes['time']
-    # Let's say your spatial dimensions are named 'lat' and 'lon' as dimensions:
-    ny, nx = model[var].shape[1], model[var].shape[2] 
-
-    # 2. Extract values and reshape from (time, lat, lon) to (time, space)
-    model_flat = model[var].values.reshape(ntime, -1)
-
-
-
 
     # Extract data from xr.dataset as numpy arrays
     obs_vals = obs[var].values
@@ -282,6 +261,10 @@ def debiaser_setup(var, time_period = 'future'):
     # Ensure that the debiased data is the same shape as the future dataset
     assert debiased.shape == input[var].shape or logger.error('Debiased dataset is not the same shape as the model dataset for xarray reconstruction.')
 
+    # Pull dimension info from input
+    ntime = input[var].sizes['time']
+    ny, nx = input[var].shape[1], input[var].shape[2] 
+
     # Reshape back to the original 2D grid shape: (time, lat, lon)
     ds_reshaped = debiased.reshape(ntime, ny, nx)
 
@@ -289,6 +272,7 @@ def debiaser_setup(var, time_period = 'future'):
     # Build out fut and hist datasets separately first
     ds_debiased = input.copy(deep = True)
     ds_debiased[var].values = ds_reshaped
+    input.close()
 
     logger.info(ds_debiased)
     logger.success('Dataset reconstructed!')
@@ -421,7 +405,7 @@ def main(variable, domain, WRF_in, MET_in, debias = True):
 
     if debias:
         # Apply debiaser to data
-        debiased_fut = debiaser_setup(variable, time_period = 'fututre')
+        debiased_fut = debiaser_setup(variable, time_period = 'future')
         debiased_hist = debiaser_setup(variable, time_period = 'historical')
 
 # ======================
