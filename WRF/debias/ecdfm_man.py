@@ -69,10 +69,18 @@ def apply_to_date(obs: xr.Dataset, hist, raw, var, date) -> np.ndarray:
     hist_cdf = ECDF(hist_sliced[var].values.flatten())
     raw_cdf = ECDF(raw_sliced[var].values.flatten())
 
-    # Select day of interest 
+    # Select day of interest and create mask
     day = int(date.strftime('%d'))
     month = int(date.strftime('%m'))
-    raw_date = raw.sel(time = (raw.time.dt.month == month) & (raw.time.dt.day == day)) # This should select day of interest across all years in ds
+    mask = (raw.time.dt.month == month) & (raw.time.dt.day == day)
+
+    # Skip dates that don't exist
+    if not mask.any():
+        logger.warning(f'No date found for {date}.')
+        return None
+    
+    # Apply mask to dataset
+    raw_date = raw.where(mask, drop = True) # This should select day of interest across all years in ds
     logger.info(f'Dataset sliced down to date of interest: {date}')
     logger.info(raw_date)
 
@@ -166,6 +174,19 @@ def main(var, data_location):
     # Pass datasets to debiaser
     test = ECDFM(obs, raw, var)
 
+    # Create output directory to store new cleaned files
+    output_dir = current_dir / 'wrfout' 
+    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
+
+    # Generate save name for debiased data
+    out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}.nc')
+
+    # Save data to netCDF file
+    test.to_netcdf(out_path)
+    logger.success(f'File saved to: {out_path}')
+
+    # Close out of data once saved
+    test.close()
 
 if __name__ == '__main__':
 
