@@ -4,12 +4,14 @@ Date Created: September 29, 2026
 """
 
 from datetime import datetime
+import gc
 import glob
 from loguru import logger
 import numpy as np
 import os
 import pandas as pd
 from pathlib import Path
+from scipy.interpolate import interp1d
 from statsmodels.distributions.empirical_distribution import ECDF, monotone_fn_inverter
 import sys
 import time
@@ -50,6 +52,18 @@ logger.debug(f'Log files saved to {log_path}')
 # ---- Functions ----
 # =====================
 
+def invert_ecdf(ecdf_obj):
+    """
+    Inverts a statsmodels ECDF object using its .y and .x attributes, regardless of if
+    the values are monotonic or not, with safe extrapolation to prevent NaNs.
+    """
+    return interp1d(
+        ecdf_obj.y, 
+        ecdf_obj.x, 
+        bounds_error = False, 
+        fill_value = 'extrapolate'  # Prevents NaNs if raw percentiles push past bounds
+    )
+
 def apply_to_date(obs: xr.Dataset, hist, raw, var, date) -> np.ndarray:
     """
     Debiases data for a given date by constructing a CDF using a dataset restricted to be within a 
@@ -60,11 +74,11 @@ def apply_to_date(obs: xr.Dataset, hist, raw, var, date) -> np.ndarray:
 
     # Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
     obs_sliced = running_window_slice(obs, date)
-    logger.info(f'NaNs in obs running window: {obs_sliced.isnull().sum()}')
+    logger.info(f'NaNs in obs running window: {float(obs_sliced[var].isnull().sum().values)}')
     hist_sliced = running_window_slice(hist, date)
-    logger.info(f'NaNs in hist running window: {hist_sliced.isnull().sum()}')
+    logger.info(f'NaNs in hist running window: {float(hist_sliced[var].isnull().sum().values)}')
     raw_sliced = running_window_slice(raw, date)
-    logger.info(f'NaNs in raw running window: {raw_sliced.isnull().sum()}')
+    logger.info(f'NaNs in raw running window: {float(raw_sliced[var].isnull().sum().values)}')
     logger.info('Datasets sliced into running windows.')
 
     # Create CDFs from sliced datasets
@@ -84,35 +98,35 @@ def apply_to_date(obs: xr.Dataset, hist, raw, var, date) -> np.ndarray:
     
     # Apply mask to dataset
     raw_date = raw.where(mask, drop = True) # This should select day of interest across all years in ds
-    logger.info(f'NaNs in raw data for {date}: {raw_date.isnull().sum()}')
+    logger.info(f'NaNs in raw data for {date}: {float(raw_date[var].isnull().sum().values)}')
     logger.info(f'Dataset sliced down to date of interest: {date}')
     logger.info(raw_date)
 
     # Use raw_cdf like a function to find all of the percentiles in raw_date
     raw_percentiles = raw_cdf(raw_date[var].values)
     logger.info(f'Percentile values for raw data: {raw_percentiles}')
-    logger.info(f'NaNs in raw_percentiles: {np.isnan(raw_percentiles).sum()}')
+    logger.info(f'NaNs in raw_percentiles: {float(np.isnan(raw_percentiles).sum())}')
 
     # Invert hist_cdf and obs_cdf to take a percentile and output a data point
-    inv_obs = monotone_fn_inverter(obs_cdf, obs_cdf.x)
-    inv_hist = monotone_fn_inverter(hist_cdf, hist_cdf.x)
+    inv_obs = invert_ecdf(obs_cdf)
+    inv_hist = invert_ecdf(hist_cdf)
 
     # Find data points for every percentile in raw_percentiles
     obs_vals = inv_obs(raw_percentiles)
-    logger.info(f'NaNs in obs_vals: {np.isnan(obs_vals).sum()}')
+    logger.info(f'NaNs in obs_vals: {float(np.isnan(obs_vals).sum())}')
     logger.info(f'Obs values for given percentiles: {obs_vals}')
     hist_vals = inv_hist(raw_percentiles)
-    logger.info(f'NaNs in hist_vals: {np.isnan(hist_vals).sum()}')
+    logger.info(f'NaNs in hist_vals: {float(np.isnan(hist_vals).sum())}')
     logger.info(f'Historical values for given percentiles: {hist_vals}')
 
     # Perform bias adjustment
     bias = hist_vals - obs_vals
-    logger.info(f'NaNs in bias: {np.isnan(bias).sum()}')
+    logger.info(f'NaNs in bias: {float(np.isnan(bias).sum())}')
     raw_bias_corrected = raw_date[var].values - bias
 
     # End script early if there are Nans in data
-    if np.isnan(raw_bias_corrected).sum() > 0:
-        logger.error(f'NaNs in debiased data: {np.isnan(raw_bias_corrected).sum()}')
+    if np.isnan(raw_bias_corrected).any():
+        logger.error(f'NaNs in debiased data: {float(np.isnan(raw_bias_corrected).sum())}')
         logger.info(f'Nan error occured on {date}.')
         return None
 
@@ -126,6 +140,10 @@ def apply_to_date(obs: xr.Dataset, hist, raw, var, date) -> np.ndarray:
     hist_sliced.close()
     raw_sliced.close()
     raw_date.close()
+    del obs_vals
+    del hist_vals
+    del raw_percentiles
+    gc.collect()
 
     return raw_bias_corrected
 
@@ -144,11 +162,11 @@ def ECDFM(obs, raw, var):
     
     # Select specific location of interest (choses nearest possible location)
     obs_loc = loc_sel(obs, lat = lat, lon = lon)
-    logger.info(f'NaNs at selected obs location: {obs_loc.isnull().sum()}')
+    logger.info(f'NaNs at selected obs location: {float(obs_loc[var].isnull().sum().values)}')
     hist_loc = loc_sel(hist, lat = lat, lon = lon)
-    logger.info(f'NaNs at selected hist location: {hist_loc.isnull().sum()}')
+    logger.info(f'NaNs at selected hist location: {float(hist_loc[var].isnull().sum().values)}')
     raw_loc = loc_sel(raw, lat = lat, lon = lon)
-    logger.info(f'NaNs at selected raw location: {raw_loc.isnull().sum()}')
+    logger.info(f'NaNs at selected raw location: {float(raw_loc[var].isnull().sum().values)}')
     logger.info(raw_loc[var])
 
     # Make copy of raw_loc to plug debiased data into
@@ -163,7 +181,7 @@ def ECDFM(obs, raw, var):
         debiased_doy = apply_to_date(obs_loc, hist_loc, raw_loc, var, date)
 
         # Exit out of function if Nans occur
-        if debiased_doy == None:
+        if debiased_doy is None:
             logger.error(f'Nans detected in dataset. See log above for more information.')
             return None
 
@@ -173,13 +191,22 @@ def ECDFM(obs, raw, var):
 
         # Plug in debiased data
         mask = (template.time.dt.month == month) & (template.time.dt.day == day)
-        template[var].values[mask] = debiased_doy 
+        template[var].data[mask] = debiased_doy 
         logger.info(f'Debiased data for {date} added to dataset!')
 
-    logger.info('Raw model data.')
-    logger.info(raw_loc[var].values)
-    logger.info('Debiased model data.')
-    logger.info(template[var].values)
+        # Check that data was actaully replaced
+        temp_masked = template[var].where(mask, drop = True)
+        raw_masked = raw[var].where(mask, drop = True)
+        bias = raw_masked - temp_masked # Back into data's bias
+        if (bias.all() == 0): # Ensure it's not all zeros
+            logger.error('Bias corrected data was not successfully applied to dataset.')
+            return None
+        else:
+            logger.info(f'Bias for {date} successfully corrected.')
+
+        # Close unnecessay datasets
+        temp_masked.close()
+        raw_masked.close()
 
     return template
 
@@ -242,4 +269,5 @@ if __name__ == '__main__':
 
     # Force script to stop running once code is finished
     sys.exit(0)
-    
+
+# TODO: findout why Nans are showing up in dataset

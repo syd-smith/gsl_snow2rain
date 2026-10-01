@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH --account=uspcasw-np
-#SBATCH --partition=uspcasw-np
+#SBATCH --account=strong-kp
+#SBATCH --partition=strong-kp
 #SBATCH --job-name=tmmx
 #SBATCH --time=3-00:00:00
 #SBATCH --mem=20GB
