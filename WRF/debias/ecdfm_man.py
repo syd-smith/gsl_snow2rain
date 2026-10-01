@@ -57,9 +57,19 @@ def invert_ecdf(ecdf_obj):
     Inverts a statsmodels ECDF object using its .y and .x attributes, regardless of if
     the values are monotonic or not, with safe extrapolation to prevent NaNs.
     """
+    # ECDF from statsmodels sets first x value to -inf which causes NaNs for very small percentiles passed to the inverted function
+    # Mask out any indefinite values to prevent possible NaNs
+    finite_mask = np.isfinite(ecdf_obj.x)
+    x_vals = ecdf_obj.x[finite_mask]
+    y_vals = ecdf_obj.y[finite_mask]
+
+    # Ensure x_vals are unique and strictly increasing for interp1d (monotonic)
+    x_unique, indices = np.unique(x_vals, return_index=True)
+    y_unique = y_vals[indices]
+
     return interp1d(
-        ecdf_obj.y, 
-        ecdf_obj.x, 
+        y_unique, # Pass y values as x values
+        x_unique, # And vice versa
         bounds_error = False, 
         fill_value = 'extrapolate'  # Prevents NaNs if raw percentiles push past bounds
     )
@@ -70,16 +80,23 @@ def apply_to_date(obs: xr.Dataset, hist, raw, var, date) -> np.ndarray:
     running window. Date must be a valid date that exists within the dataset formatted as '%Y-%m-%d' 
     datetime object.
     """
-    # TODO: check how running_window_slice handles leap years
+    # TODO: check how running_window_slice handles leap years (try to set calendar year to 1988 instead since it's a leap year)
 
     # Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
     obs_sliced = running_window_slice(obs, date)
     logger.info(f'NaNs in obs running window: {float(obs_sliced[var].isnull().sum().values)}')
+
     hist_sliced = running_window_slice(hist, date)
     logger.info(f'NaNs in hist running window: {float(hist_sliced[var].isnull().sum().values)}')
+
     raw_sliced = running_window_slice(raw, date)
     logger.info(f'NaNs in raw running window: {float(raw_sliced[var].isnull().sum().values)}')
     logger.info('Datasets sliced into running windows.')
+
+    # End function if NaNs are present in the source data
+    if obs_sliced[var].isnull().any() or hist_sliced[var].isnull().any() or raw_sliced[var].isnull().any():
+        logger.error('NaNs detected in source data.')
+        return NotImplementedError
 
     # Create CDFs from sliced datasets
     obs_cdf = ECDF(obs_sliced[var].values.flatten())
@@ -98,7 +115,6 @@ def apply_to_date(obs: xr.Dataset, hist, raw, var, date) -> np.ndarray:
     
     # Apply mask to dataset
     raw_date = raw.where(mask, drop = True) # This should select day of interest across all years in ds
-    logger.info(f'NaNs in raw data for {date}: {float(raw_date[var].isnull().sum().values)}')
     logger.info(f'Dataset sliced down to date of interest: {date}')
     logger.info(raw_date)
 
@@ -107,6 +123,7 @@ def apply_to_date(obs: xr.Dataset, hist, raw, var, date) -> np.ndarray:
     logger.info(f'Percentile values for raw data: {raw_percentiles}')
     logger.info(f'NaNs in raw_percentiles: {float(np.isnan(raw_percentiles).sum())}')
 
+    # TODO: NaNs are appearing in obs and hist from this point on
     # Invert hist_cdf and obs_cdf to take a percentile and output a data point
     inv_obs = invert_ecdf(obs_cdf)
     inv_hist = invert_ecdf(hist_cdf)
@@ -115,6 +132,7 @@ def apply_to_date(obs: xr.Dataset, hist, raw, var, date) -> np.ndarray:
     obs_vals = inv_obs(raw_percentiles)
     logger.info(f'NaNs in obs_vals: {float(np.isnan(obs_vals).sum())}')
     logger.info(f'Obs values for given percentiles: {obs_vals}')
+
     hist_vals = inv_hist(raw_percentiles)
     logger.info(f'NaNs in hist_vals: {float(np.isnan(hist_vals).sum())}')
     logger.info(f'Historical values for given percentiles: {hist_vals}')
@@ -147,15 +165,11 @@ def apply_to_date(obs: xr.Dataset, hist, raw, var, date) -> np.ndarray:
 
     return raw_bias_corrected
 
-def ECDFM(obs, raw, var):
+def ECDFM(obs, raw, var, lat, lon):
     """
     Performs ECDFM quantile mapping debiasing process on given data based on data from a given histroical
     period and corresponding observational data. Raw data should include both historical and future data. 
     """
-
-    # Set location of interest as SLC airport
-    lat = 40.788
-    lon = -111.978
 
     # Slice raw data down to historical period
     hist = raw.sel(time = slice('1985-01-01', '2014-12-31'))
@@ -222,6 +236,12 @@ def nan_test(var):
 
     return nan_data
 
+def np_nan_loc(arr):
+    """
+    Find locations of NaNs in np.array.
+    """
+    return np.argwhere(np.isnan(arr))
+
 # Catch silent errors and report to log file
 @logger.catch 
 def main(var, data_location, save = True):
@@ -232,8 +252,12 @@ def main(var, data_location, save = True):
     raw_path = glob.glob(str(data_location / 'daily' / f'*{var}*.nc'))
     raw = xr.open_dataset(raw_path[0], decode_times = True)
 
+    # Set location of interest as SLC airport
+    lat = 40.788
+    lon = -111.978
+
     # Pass datasets to debiaser
-    test = ECDFM(obs, raw, var)
+    test = ECDFM(obs, raw, var, lat, lon)
 
     if save:
         # Create output directory to store new cleaned files
@@ -270,4 +294,3 @@ if __name__ == '__main__':
     # Force script to stop running once code is finished
     sys.exit(0)
 
-# TODO: findout why Nans are showing up in dataset
