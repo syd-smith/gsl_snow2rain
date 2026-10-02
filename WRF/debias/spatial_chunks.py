@@ -342,66 +342,89 @@ def main(variable, domain, WRF_in, MET_in, debias = True):
     else:
         variables = [variable]
 
-    # for var in variables:
-    #     # TODO: log errors if the workflow isn't completed sequentially
-    #     # Generate list of WRF input files
-    #     files = get_fpaths(WRF_in, domain)
+    for var in variables:
+        # TODO: log errors if the workflow isn't completed sequentially
+        # Generate list of WRF input files
+        files = get_fpaths(WRF_in, domain)
+        model_period = range(1985, 2100)
         
-    #     # Set to full historical period
-    #     for year in range(1985, 2015):
-    #         # Call and interpolate gridMET data (obs) for the given year 
-    #         MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
+        # # Set to full historical period
+        # for year in model_period:
+        #     # Call and interpolate gridMET data (obs) for the given year 
+        #     MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
 
-    #         # Save year of interpolated gridMET data
-    #         save_data = data_saver(MET_data, 'gridMET', var, year)
+        #     # Save year of interpolated gridMET data
+        #     save_data = data_saver(MET_data, 'gridMET', var, year)
 
-    #     # Combine all gridMET files into a single file with context manager
-    #     with xr.open_mfdataset(
-    #         glob.glob(str(current_dir / 'gridMET' / var / '*.nc')), 
-    #         combine = 'nested', 
-    #         concat_dim = 'time', 
-    #         preprocess = fix_time_coord
-    #         ) as gridmet_open:
+        # # Combine all gridMET files into a single file with context manager
+        # with xr.open_mfdataset(
+        #     glob.glob(str(current_dir / 'gridMET' / var / '*.nc')), 
+        #     combine = 'nested', 
+        #     concat_dim = 'time', 
+        #     preprocess = fix_time_coord
+        #     ) as gridmet_open:
 
-    #         # Write file to netcdf
-    #         gridmet_open.sortby('time').to_netcdf(current_dir / 'gridMET' / f'gridMET_GSLBIP_{var}.nc')
+        #     # Write file to netcdf
+        #     gridmet_open.sortby('time').to_netcdf(current_dir / 'gridMET' / f'gridMET_GSLBIP_{var}.nc')
         
-    #     logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
+        # logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
 
-    #     # Set to historical + future period
-    #     for year in range(1985, 2100):
-    #         # Create date range using pandas
-    #         # TODO: set to dates for full year
-    #         dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
+        # Set to historical + future period
+        for year in model_period:
+            # Create date range using pandas
+            # TODO: set to dates for full year
+            dates = pd.date_range(start = f'{year}-12-29', end = f'{year}-12-31', freq = 'D') 
 
-    #         for day in dates:
-    #             if day == dates[0]:
-    #                 # Set the day you want to be working with to today
-    #                 today = day.strftime('%Y-%m-%d') # Turn day in to usable date string 
-    #                 continue
+            for day in dates:
+                if day == dates[0]:
+                    # Set the day you want to be working with to today
+                    today = day.strftime('%Y-%m-%d') # Turn day in to usable date string 
+                    continue
 
-    #             else:
-    #                 # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
-    #                 tomorrow = day.strftime('%Y-%m-%d')
+                # Handle the last day of the year
+                elif day == dates[-1]:
+                    # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
+                    tomorrow = day.strftime('%Y-%m-%d')
 
-    #                 # Create clean file of daily WRF data
-    #                 daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
+                    # Create clean file of daily WRF data
+                    daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
 
-    #                 # Set tomorrow as the new today to move on to the next series
-    #                 today = tomorrow
+                    # Set tomorrow as the new today to move on to the next series
+                    today = tomorrow
+
+                    # Check that you aren't calling data outside of the model's date range
+                    if (year + 1) not in model_period:
+                        continue
+                    else: 
+                        tomorrow = f'{year + 1}-01-01'
+
+                    # Create clean file of daily WRF data for the last day in the date range
+                    logger.info(f'Today for 12-31 is {today} and tomorrow is {tomorrow}.')
+                    daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
+
+
+                else:
+                    # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
+                    tomorrow = day.strftime('%Y-%m-%d')
+
+                    # Create clean file of daily WRF data
+                    daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
+
+                    # Set tomorrow as the new today to move on to the next series
+                    today = tomorrow
         
-    #     # Combine all cleaned WRF files into a single file using context manager
-    #     with xr.open_mfdataset(
-    #         glob.glob(str(current_dir / 'daily' / var / '*.nc')), 
-    #         combine = 'nested', 
-    #         concat_dim = 'time', 
-    #         preprocess = fix_time_coord
-    #         ) as wrf_open:
+        # Combine all cleaned WRF files into a single file using context manager
+        with xr.open_mfdataset(
+            glob.glob(str(current_dir / 'daily' / var / '*.nc')), 
+            combine = 'nested', 
+            concat_dim = 'time', 
+            preprocess = fix_time_coord
+            ) as wrf_open:
 
-    #         # Write file to netcdf
-    #         wrf_open.sortby('time').to_netcdf(current_dir / 'daily' / f'wrf_raw_GSLBIP_multimodel_ssp245_{var}.nc')
+            # Write file to netcdf
+            wrf_open.sortby('time').to_netcdf(current_dir / 'daily' / f'wrf_raw_GSLBIP_multimodel_ssp245_{var}.nc')
 
-    #     logger.success(f'WRF files successfully cleaned and saved for {var}!')
+        logger.success(f'WRF files successfully cleaned and saved for {var}!')
 
     if debias:
         # Apply debiaser to data
@@ -423,13 +446,14 @@ if __name__ == '__main__':
     logger.info('Beginning execution.')
     logger.info('No chunker.')
 
+    # TODO: check that all 12-31's got included - gridMET seems to not have this issue just WRF
     # Only inputs required
     main(
-        variable = 'tmmn',
+        variable = 'tmmx',
         domain = '03',
         WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/', 
         MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/',
-        debias = True
+        debias = False
         )
 
     # Report of runtime at completion 

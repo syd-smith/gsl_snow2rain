@@ -403,8 +403,8 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
     # Filter dates to match today
     target_date = datetime.strptime(today, '%Y-%m-%d').date()
     logger.info(f'Filtering for {target_date}')
-    mask = localized_time.date == target_date
-    time_clean_ds = combo_clean.isel(time = mask)
+    mask = (clean_format.date == target_date)
+    time_clean_ds = ds_new_tz.isel(time = mask)
     logger.info(time_clean_ds['time'])
 
     # Check that only four timestamps are included in the daily data
@@ -530,7 +530,7 @@ def climate_avg(var):
 
     # TODO: set to correct date range (full year)
     # Generate normal date range with a dummy year (note 1985 is not a leap year)
-    dates = pd.date_range(start = '1985-01-01', end = '1985-12-31', freq = 'D')
+    dates = pd.date_range(start = '1988-01-01', end = '1988-12-31', freq = 'D')
 
     # Strip out the year and keep only month-day
     month_days = dates.strftime('%m-%d')

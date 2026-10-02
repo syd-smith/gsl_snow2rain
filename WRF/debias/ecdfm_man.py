@@ -1,3 +1,4 @@
+#%%
 """
 Author: Sydney Smith
 Date Created: September 29, 2026
@@ -186,8 +187,8 @@ def ECDFM(obs, raw, var, lat, lon):
     # Make copy of raw_loc to plug debiased data into
     template = raw_loc.copy()
 
-    # Create date range that spans a calendar year
-    dates = pd.date_range(start = '1985-01-01', end = '1985-12-31', freq = 'D') 
+    # Create date range that spans a calendar year (select a year that is a leap year)
+    dates = pd.date_range(start = '1988-01-01', end = '1988-12-31', freq = 'D') 
 
     for date in dates:
         # Apply bias correction for single date
@@ -196,7 +197,7 @@ def ECDFM(obs, raw, var, lat, lon):
 
         # Exit out of function if Nans occur
         if debiased_doy is None:
-            logger.error(f'Nans detected in dataset. See log above for more information.')
+            logger.error(f'Error detected in dataset. See log above for more information.')
             return None
 
         # Pull month and day from date
@@ -208,11 +209,14 @@ def ECDFM(obs, raw, var, lat, lon):
         template[var].data[mask] = debiased_doy 
         logger.info(f'Debiased data for {date} added to dataset!')
 
-        # Check that data was actaully replaced
+        # Back into data's bias to ensure that the bias corrected data doesn't equal to raw data
         temp_masked = template[var].where(mask, drop = True)
         raw_masked = raw[var].where(mask, drop = True)
         bias = raw_masked - temp_masked # Back into data's bias
-        if (bias.all() == 0): # Ensure it's not all zeros
+        logger.info(f'bias type: {type(bias)}')
+
+        # Ensure that bias is not all zeros
+        if (bias == 0).all(): # Ensure it's not all zeros
             logger.error('Bias corrected data was not successfully applied to dataset.')
             return None
         else:
@@ -274,23 +278,126 @@ def main(var, data_location, save = True):
     # Close out of data
     test.close()
 
-if __name__ == '__main__':
+# if __name__ == '__main__':
 
-    # Track program time in log files
-    start = time.perf_counter()
-    logger.info('Beginning execution.')
+#     # Track program time in log files
+#     start = time.perf_counter()
+#     logger.info('Beginning execution.')
 
-    # Only inputs required
-    main(
-            var = 'tmmx',
-            data_location = current_dir,
-            save = False
-            )
+#     # Only inputs required
+#     main(
+#             var = 'tmmx',
+#             data_location = current_dir,
+#             save = True
+#             )
 
-    # Report of runtime at completion 
-    logger.success(f'Debiasing process completed!')
-    logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
+#     # Report of runtime at completion 
+#     logger.success(f'Debiasing process completed!')
+#     logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
 
-    # Force script to stop running once code is finished
-    sys.exit(0)
+#     # Force script to stop running once code is finished
+#     sys.exit(0)
 
+
+#TODO: why is it saying that 1985-12-31 does not exist in dataset -> from no mask in line 110
+
+var = 'tmmx'
+# Open datasets
+obs_path = glob.glob(str(current_dir / 'gridMET' / f'*{var}*.nc'))
+obs = xr.open_dataset(obs_path[0], decode_times = True)
+
+raw_path = glob.glob(str(current_dir / 'daily' / f'*{var}*.nc'))
+raw = xr.open_dataset(raw_path[0], decode_times = True)
+
+# Set location of interest as SLC airport
+lat = 40.788
+lon = -111.978
+
+
+# Slice raw data down to historical period
+hist = raw.sel(time = slice('1985-01-01', '2014-12-31'))
+
+# Select specific location of interest (choses nearest possible location)
+obs_loc = loc_sel(obs, lat = lat, lon = lon)
+logger.info(f'NaNs at selected obs location: {float(obs_loc[var].isnull().sum().values)}')
+hist_loc = loc_sel(hist, lat = lat, lon = lon)
+logger.info(f'NaNs at selected hist location: {float(hist_loc[var].isnull().sum().values)}')
+raw_loc = loc_sel(raw, lat = lat, lon = lon)
+logger.info(f'NaNs at selected raw location: {float(raw_loc[var].isnull().sum().values)}')
+logger.info(raw_loc[var])
+
+# Make copy of raw_loc to plug debiased data into
+template = raw_loc.copy()
+
+# Create date range that spans a calendar year
+date = pd.to_datetime('1985-12-31') 
+
+# Apply bias correction for single date
+logger.info(f'Date type: {type(date)}')
+# debiased_doy = apply_to_date(obs_loc, hist_loc, raw_loc, var, date)
+
+# Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
+obs_sliced = running_window_slice(obs_loc, date)
+logger.info(f'NaNs in obs running window: {float(obs_sliced[var].isnull().sum().values)}')
+
+hist_sliced = running_window_slice(hist_loc, date)
+logger.info(f'NaNs in hist running window: {float(hist_sliced[var].isnull().sum().values)}')
+
+raw_sliced = running_window_slice(raw_loc, date)
+logger.info(f'NaNs in raw running window: {float(raw_sliced[var].isnull().sum().values)}')
+logger.info('Datasets sliced into running windows.')
+
+# End function if NaNs are present in the source data
+if obs_sliced[var].isnull().any() or hist_sliced[var].isnull().any() or raw_sliced[var].isnull().any():
+    logger.error('NaNs detected in source data.')
+
+# Create CDFs from sliced datasets
+obs_cdf = ECDF(obs_sliced[var].values.flatten())
+hist_cdf = ECDF(hist_sliced[var].values.flatten())
+raw_cdf = ECDF(raw_sliced[var].values.flatten())
+
+# Select day of interest and create mask
+day = int(date.strftime('%d'))
+month = int(date.strftime('%m'))
+mask = (raw.time.dt.month == month) & (raw.time.dt.day == day)
+
+# Skip dates that don't exist
+if not mask.any():
+    logger.warning(f'No date found for {date}.')
+
+# Apply mask to dataset
+raw_date = raw.where(mask, drop = True) # This should select day of interest across all years in ds
+logger.info(f'Dataset sliced down to date of interest: {date}')
+logger.info(raw_date)
+
+
+
+
+
+
+
+#%%
+# Exit out of function if Nans occur
+if debiased_doy is None:
+    logger.error(f'Nans detected in dataset. See log above for more information.')
+
+# Pull month and day from date
+day = int(date.strftime('%d'))
+month = int(date.strftime('%m'))
+
+# Plug in debiased data
+mask = (template.time.dt.month == month) & (template.time.dt.day == day)
+template[var].data[mask] = debiased_doy 
+logger.info(f'Debiased data for {date} added to dataset!')
+
+# Check that data was actaully replaced
+temp_masked = template[var].where(mask, drop = True)
+raw_masked = raw[var].where(mask, drop = True)
+bias = raw_masked - temp_masked # Back into data's bias
+if (bias == 0).all(): # Ensure it's not all zeros
+    logger.error('Bias corrected data was not successfully applied to dataset.')
+else:
+    logger.info(f'Bias for {date} successfully corrected.')
+
+
+# %%
