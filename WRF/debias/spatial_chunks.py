@@ -441,26 +441,26 @@ def main(variable, domain, WRF_in, MET_in, debias = True):
 # tmmn, tmmx, pr, sph, srad, wind (vas & uas)
 # TODO: check for edge cases with other variables 
 
-if __name__ == '__main__':
-    # Track program time in log files
-    start = time.perf_counter()
-    logger.info('Beginning execution.')
-    logger.info('No chunker.')
+# if __name__ == '__main__':
+#     # Track program time in log files
+#     start = time.perf_counter()
+#     logger.info('Beginning execution.')
+#     logger.info('No chunker.')
 
-    # TODO: check that all 12-31's got included - gridMET seems to not have this issue just WRF
-    # Only inputs required
-    main(
-        variable = 'tmmx',
-        domain = '03',
-        WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/', 
-        MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/',
-        debias = False
-        )
+#     # TODO: check that all 12-31's got included - gridMET seems to not have this issue just WRF
+#     # Only inputs required
+#     main(
+#         variable = 'tmmx',
+#         domain = '03',
+#         WRF_in = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/', 
+#         MET_in = '/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/',
+#         debias = False
+#         )
 
-    # Report of runtime at completion 
-    logger.success(f'Debiasing process completed!')
-    logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
+#     # Report of runtime at completion 
+#     logger.success(f'Debiasing process completed!')
+#     logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
 
-    # Force script to stop running once code is finished
-    sys.exit(0)
+#     # Force script to stop running once code is finished
+#     sys.exit(0)
 

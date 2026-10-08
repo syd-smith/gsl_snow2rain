@@ -20,6 +20,6 @@ conda activate olympics
 PYTHON_BIN="/uufs/chpc.utah.edu/common/home/strong-group7/sydney/miniforge3_envs/olympics/bin/python"
 
 # Call python file
-${PYTHON_BIN} spatial_chunks.py 
+${PYTHON_BIN} ecdfm_man.py 
 
 
