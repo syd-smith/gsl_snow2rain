@@ -367,13 +367,13 @@ def main(variable, domain, WRF_in, MET_in, debias = True):
         #     # Write file to netcdf
         #     gridmet_open.sortby('time').to_netcdf(current_dir / 'gridMET' / f'gridMET_GSLBIP_{var}.nc')
         
-        # logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
+        logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
 
         # Set to historical + future period
         for year in model_period:
             # Create date range using pandas
             # TODO: set to dates for full year
-            dates = pd.date_range(start = f'{year}-12-29', end = f'{year}-12-31', freq = 'D') 
+            dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
 
             for day in dates:
                 if day == dates[0]:
@@ -418,7 +418,8 @@ def main(variable, domain, WRF_in, MET_in, debias = True):
             glob.glob(str(current_dir / 'daily' / var / '*.nc')), 
             combine = 'nested', 
             concat_dim = 'time', 
-            preprocess = fix_time_coord
+            preprocess = fix_time_coord,
+            engine = 'netcdf4'
             ) as wrf_open:
 
             # Write file to netcdf
