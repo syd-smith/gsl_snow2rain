@@ -199,9 +199,36 @@ class vectorized_ECDF(StepFunc3D):
 # ---- Functions ----
 # =====================
 
-def vect_app(obs, hist, raw, var, date):
+def doy_mask(ds, date):
+    """
+    Mask a dataset to include only data for a given day of year. Date must be a valid date that 
+    exists within the dataset formatted as '%Y-%m-%d'.
+    """
+    # Ensure date is pandas datetime object
+    date = pd.to_datetime(date)
+    logger.info(f'Masking dataset for {date}.')
 
-     # Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
+    # Select day of interest and create mask
+    day = int(date.strftime('%d'))
+    month = int(date.strftime('%m'))
+    mask = (ds.time.dt.month == month) & (ds.time.dt.day == day)
+
+    if not mask.any():
+        logger.warning(f'No date found for {date}.')
+
+    # Apply mask to dataset
+    masked = ds.where(mask, drop = True)
+    logger.info(masked)
+
+    return masked
+
+def vect_app(obs, hist, raw, var, date):
+    """
+    Debias model data for a given date as a vectorized process. 3D array should be organized as
+    (time, lat, lon) where debiasing is performed along the time axis. All data inputs should 
+    first be detrended before being passed to this function.
+    """
+    # Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
     obs_sliced = running_window_slice(obs, date)
     logger.info(f'NaNs in obs running window: {float(obs_sliced[var].isnull().sum().values)}')
 
@@ -398,7 +425,6 @@ def ECDFM(obs, raw, var, lat = 40.788, lon = -111.978, vectorized = True):
     Performs ECDFM quantile mapping debiasing process on given data based on data from a given histroical
     period and corresponding observational data. Raw data should include both historical and future data. 
     """
-
     # Slice raw data down to historical period
     hist = raw.sel(time = slice('1985-01-01', '2014-12-31'))
 
@@ -413,7 +439,7 @@ def ECDFM(obs, raw, var, lat = 40.788, lon = -111.978, vectorized = True):
         logger.info(raw[var])
 
     # Make copy of raw_loc to plug debiased data into
-    template = raw.copy()
+    template = raw.copy(deep = True)
 
     # Create date range that spans a calendar year (select a year that is a leap year)
     dates = pd.date_range(start = '1988-01-01', end = '1988-12-31', freq = 'D') 
@@ -447,13 +473,24 @@ def ECDFM(obs, raw, var, lat = 40.788, lon = -111.978, vectorized = True):
         bias = raw_masked - temp_masked # Back into data's bias
         logger.info(f'bias type: {type(bias)}')
 
+        # Create boolean to check if bias is all zeros
+        if isinstance(bias, xr.Dataset):
+            is_all_zeros = (bias[var] == 0).all().item() # Returns True if every single value is zero
+            bias = bias[var]
+        elif isinstance(bias, xr.DataArray): 
+            # Expects bias to be xr.DataArray
+            is_all_zeros = (bias == 0).all().item() # Returns True if every single value is zero
+        else: 
+            logger.error(f'Unexpected type for bias: {type(bias)}')
+            return None
+
         # Ensure that bias is not all zeros
-        if (bias == 0).all(): # Ensure it's not all zeros
+        if is_all_zeros: # Triggers if bias_check is set to true
             logger.info(bias)
             logger.error('Bias corrected data was not successfully applied to dataset.')
             return None
         else:
-            logger.info(f'Bias for {date} successfully corrected.')
+            logger.info(f'Bias for {date} successfully corrected and saved to dataset.')
 
         # Close unnecessay datasets
         temp_masked.close()
@@ -465,7 +502,6 @@ def nan_test(var):
     """
     Returns location of Nans in debiased data.
     """
-    
     fpath = glob.glob(str(current_dir / 'wrfout' / f'*{var}*.nc'))
     debiased = xr.open_dataset(fpath[0], decode_times = True)
 
@@ -517,9 +553,15 @@ def main(var, data_location, vectorized = True, save = True):
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
+        detrended_obs_path = os.path.join(output_dir, f'detrended_obs_{var}.nc')
+        detrended_raw_path = os.path.join(output_dir, f'detrended_raw_{var}.nc')
+        debiased_path = os.path.join(output_dir, f'debiased_{var}.nc')
         out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_test.nc')
 
         # Save data to netCDF file
+        detrended_obs.to_netcdf(detrended_obs_path)
+        detrended_raw.to_netcdf(detrended_raw_path)
+        debiased.to_netcdf(debiased_path)
         retrended.to_netcdf(out_path)
         logger.success(f'File saved to: {out_path}')
 
@@ -527,25 +569,23 @@ def main(var, data_location, vectorized = True, save = True):
     debiased.close()
     # retrended.close()
 
-if __name__ == '__main__':
+# if __name__ == '__main__':
 
-    # Track program time in log files
-    start = time.perf_counter()
-    logger.info('Beginning execution.')
+#     # Track program time in log files
+#     start = time.perf_counter()
+#     logger.info('Beginning execution.')
 
-    # Only inputs required
-    main(
-            var = 'tmmx',
-            data_location = current_dir,
-            save = True
-            )
+#     # Only inputs required
+#     main(
+#             var = 'tmmn',
+#             data_location = current_dir,
+#             save = True
+#             )
 
-    # Report of runtime at completion 
-    logger.success(f'Debiasing process completed!')
-    logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
+#     # Report of runtime at completion 
+#     logger.success(f'Debiasing process completed!')
+#     logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
 
-    # Force script to stop running once code is finished
-    sys.exit(0)
-
-#TODO: erroring out in line 452 debiasing not applied properly so just returning zeros
+#     # Force script to stop running once code is finished
+#     sys.exit(0)
 

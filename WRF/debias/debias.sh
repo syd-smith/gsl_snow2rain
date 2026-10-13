@@ -3,13 +3,13 @@
 #SBATCH --cluster=notchpeak
 #SBATCH --account=uspcasw-np
 #SBATCH --partition=uspcasw-np
-#SBATCH --job-name=combo
-#SBATCH --time=2-00:00:00
+#SBATCH --job-name=tmmx
+#SBATCH --time=3-00:00:00
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=combo.out    
-#SBATCH --error=combo.err
+#SBATCH --output=tmmx.out    
+#SBATCH --error=tmmx.err
  
 # Load in software
 module load miniforge3
@@ -20,6 +20,7 @@ conda activate olympics
 PYTHON_BIN="/uufs/chpc.utah.edu/common/home/strong-group7/sydney/miniforge3_envs/olympics/bin/python"
 
 # Call python file
-${PYTHON_BIN} ecdfm_man.py 
+${PYTHON_BIN} spatial_chunks.py 
+
 
 

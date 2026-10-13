@@ -259,7 +259,7 @@ def cdf_masked(data):
         logger.error('Failed to generate mask for data.')
         return
 
-def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
+def cdf_plt(var, obs, debiased, dates, lat, lon, save = False):
     """
     Create a plot of the cumulative distribution function for each of the given datasets.
     Data will be reduced to the given locations and dates. Dates must be str(%Y/%m/%d).
@@ -282,7 +282,7 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
 
     # Slice dataset to a specific location
     obs_sel = loc_sel(obs, lat, lon)
-    raw_sel = loc_sel(raw, lat, lon)
+    # raw_sel = loc_sel(raw, lat, lon)
     debiased_sel = loc_sel(debiased, lat, lon)
 
     for i, date in enumerate(dates):
@@ -290,27 +290,27 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
         # Default window size is 31 days
         window_size = 31
         obs_window = running_window_slice(obs_sel, date, window_size)
-        raw_window = running_window_slice(raw_sel, date, window_size)
+        # raw_window = running_window_slice(raw_sel, date, window_size)
         debiased_window = running_window_slice(debiased_sel, date, window_size)
 
         # Slice into historical and future periods
-        raw_window_hist = raw_window.sel(time = raw_window.time.dt.year.isin(range(1985, 2015)))
-        raw_window_fut = raw_window.sel(time = raw_window.time.dt.year.isin(range(2015, 2100)))
+        # raw_window_hist = raw_window.sel(time = raw_window.time.dt.year.isin(range(1985, 2015)))
+        # raw_window_fut = raw_window.sel(time = raw_window.time.dt.year.isin(range(2015, 2100)))
         debiased_window_hist = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(1985, 2015)))
         debiased_window_fut = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(2015, 2100)))
 
         # Calculate a CDF for each array
         obs_cdf = ECDF(obs_window[var].values.flatten())
-        raw_hist_cdf = ECDF(raw_window_hist[var].values.flatten())
-        raw_fut_cdf = ECDF(raw_window_fut[var].values.flatten())
+        # raw_hist_cdf = ECDF(raw_window_hist[var].values.flatten())
+        # raw_fut_cdf = ECDF(raw_window_fut[var].values.flatten())
         debiased_hist_cdf = ECDF(debiased_window_hist[var].values.flatten())
         debiased_fut_cdf = ECDF(debiased_window_fut[var].values.flatten())
         logger.info(f'CDFs calculated for {date}.')
 
         # Mask CDF outputs
         obs_x, obs_y = cdf_masked(obs_cdf)
-        raw_hist_x, raw_hist_y = cdf_masked(raw_hist_cdf)
-        raw_fut_x, raw_fut_y = cdf_masked(raw_fut_cdf)
+        # raw_hist_x, raw_hist_y = cdf_masked(raw_hist_cdf)
+        # raw_fut_x, raw_fut_y = cdf_masked(raw_fut_cdf)
         debiased_hist_x, debiased_hist_y = cdf_masked(debiased_hist_cdf)
         debiased_fut_x, debiased_fut_y = cdf_masked(debiased_fut_cdf)
 
@@ -322,19 +322,19 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save = False):
             label = 'Observations'
         )
 
-        ax[i].plot(
-            raw_hist_x,
-            raw_hist_y,
-            'r-.',
-            label = 'Historical WRF Output'
-        )
+        # ax[i].plot(
+        #     raw_hist_x,
+        #     raw_hist_y,
+        #     'r-.',
+        #     label = 'Historical WRF Output'
+        # )
 
-        ax[i].plot(
-            raw_fut_x, 
-            raw_fut_y, 
-            'r-',
-            label = 'Future WRF Output'
-        )
+        # ax[i].plot(
+        #     raw_fut_x, 
+        #     raw_fut_y, 
+        #     'r-',
+        #     label = 'Future WRF Output'
+        # )
 
         ax[i].plot(
             debiased_hist_x,
@@ -873,10 +873,10 @@ def main(var, wrf_output_location, elevation = False):
     obs_path = glob.glob(str(parent_dir / 'gridMET' / f'*{var}*.nc'))
     obs = xr.open_dataset(obs_path[0], decode_times = True)
 
-    raw_path = glob.glob(str(parent_dir / 'daily' / f'*{var}*.nc'))
-    raw = xr.open_dataset(raw_path[0], decode_times = True)
+    # raw_path = glob.glob(str(parent_dir / 'daily' / f'*{var}*.nc'))
+    # raw = xr.open_dataset(raw_path[0], decode_times = True)
 
-    debiased_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*.nc'))
+    debiased_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*test.nc'))
     debiased = xr.open_dataset(debiased_path[0], decode_times = True)
 
     # Set location of interest as SLC airport
@@ -888,7 +888,7 @@ def main(var, wrf_output_location, elevation = False):
     # trend = trend_plt(var, obs, raw, debiased, save = True)
 
     # CDF plots for SLC Airport
-    cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True) 
+    cdf = cdf_plt(var, obs, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True) 
     
     # seasonal = seasonal_bias(var, raw, debiased, save = False)
     # bias_map = min_n_max_bias(var, raw, debiased, save = True) # OOM kill (chunking didn't work might need to try mannual chunking)

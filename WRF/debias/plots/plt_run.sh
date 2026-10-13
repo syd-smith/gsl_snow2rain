@@ -1,15 +1,16 @@
 #!/bin/bash
 
+#SBATCH --cluster=notchpeak
 #SBATCH --account=uspcasw-np
 #SBATCH --partition=uspcasw-np
 #SBATCH --job-name=cdf
 #SBATCH --time=1-00:00:00
-#SBATCH --mem=50GB
+#SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --output=cdf.out    
 #SBATCH --error=cdf.err
- 
+
 # Load in software
 module load miniforge3
 source /uufs/chpc.utah.edu/sys/installdir/r8/miniforge3/25.11.0/etc/profile.d/conda.sh
