@@ -1,3 +1,4 @@
+#%%
 """
 Author: Sydney Smith & Austin LaMontagne
 Date Created: July 24, 2026
@@ -367,7 +368,7 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
                 lat_vals = ds['XLAT'].values
                 lon_vals = ds['XLONG'].values
 
-                # Recognize that dims should be 2D
+                # Recognize that dims should be 3D
                 dims_3d = ('time', 'south_north', 'west_east')
 
                 # Create new dataset to save data to
@@ -460,12 +461,12 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
     # Save daily data to a new dataset
     daily_ds = xr.Dataset(
         {
-            var: (['time', 'lat', 'lon'], daily_data.values)
+            var: (['time', 'south_north', 'west_east'], daily_data.values)
         },
         coords = {
             'time': ('time', [time_dt]),
-            'lat': (dims_3d, lat_vals),
-            'lon': (dims_3d, lon_vals)
+            'lat': (dims_2d, lat_vals),
+            'lon': (dims_2d, lon_vals)
         }
     )
 
@@ -639,3 +640,66 @@ def main(var, domain, WRF_in, MET_in):
 #     # Report of runtime at completion 
 #     logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
 
+
+
+
+wrfout = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014/'
+files = [wrfout+'wrfout_d03_1985-03-05_00:00:00', wrfout+'wrfout_d03_1985-03-05_12:00:00', wrfout+'wrfout_d03_1985-03-06_00:00:00', wrfout+'wrfout_d03_1985-03-06_12:00:00']
+var = 'tmmx'
+domain = '03'
+today = '1985-03-05'
+tomorrow = '1985-03-06'
+
+
+# List of files for given date
+matched_files = [f for f in files if f'wrfout_d{domain}_{today}' in f or f'wrfout_d{domain}_{tomorrow}' in f]
+
+# Empty list to fill with daily data
+temp_clean = []
+
+for file in matched_files:
+    # Open one timestamp file at a time
+    with open_or_skip(file) as ds:
+        
+        # Only pull out data for given variable
+        var_data = ds[WRF_vars[var]]
+        xtime_vals = var_data['XTIME'].values
+        lat_vals = ds['XLAT'].values
+        lon_vals = ds['XLONG'].values
+
+        # Recognize that dims should be 3D
+        dims_3d = ('time', 'south_north', 'west_east')
+
+        # Create new dataset to save data to
+        clean_ds = xr.Dataset(
+            {
+                var: (['time', 'lat', 'lon'], var_data.data)
+            },
+            coords = {
+                'time': ('time', xtime_vals),
+                'lat': (dims_3d, lat_vals),
+                'lon': (dims_3d, lon_vals)
+            }
+        )
+        
+        # Save each timestamp worth of day to predefined list
+        temp_clean.append(clean_ds)
+
+# Concatonate four timestamp files into one file
+combo_clean = xr.concat(temp_clean, dim = 'time')
+
+# Convert time values from UTC to MT
+localized_time = pd.to_datetime(combo_clean['time'].values).tz_localize(ZoneInfo('UTC')).tz_convert(ZoneInfo('America/Denver'))
+
+# Strip timestamps of specific timezone data
+clean_format = localized_time.tz_localize(None)
+ds_new_tz = combo_clean.assign_coords(time = ('time', clean_format))
+logger.info(ds_new_tz['time'])
+
+# Filter dates to match today
+target_date = datetime.strptime(today, '%Y-%m-%d').date()
+logger.info(f'Filtering for {target_date}')
+mask = (clean_format.date == target_date)
+time_clean_ds = ds_new_tz.isel(time = mask)
+logger.info(time_clean_ds['time'])
+# %%

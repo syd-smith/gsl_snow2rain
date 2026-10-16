@@ -1,3 +1,4 @@
+#%%
 """
 Author: Sydney Smith
 Date Created: August 25, 2026
@@ -82,7 +83,7 @@ title = {
 # ---- Functions ----
 # =====================
 
-def loc_sel(ds, lat, lon):
+def loc_sel(ds, var, lat, lon):
     """
     Select the nearest point to the lat and lon dims passed.
     """
@@ -101,17 +102,21 @@ def loc_sel(ds, lat, lon):
     y_idx, x_idx = np.unravel_index(dist_min, dist.shape)
     logger.info(f'Min distance is located at {x_idx}, {y_idx}.')
     
-    # SPull grid's spatial dims dynamically
-    spatial_dims = ds['lat'].dims
+    # Pull grid's spatial dims dynamically
+    spatial_dims = ds[var].dims
 
     # Select min distance grid point using isel
-    point_data = ds.isel({
+    point_data = ds[var].isel({
         spatial_dims[1]: y_idx,
         spatial_dims[2]: x_idx
     }).squeeze()
 
-    logger.info(f'New lat: {float(point_data["lat"][0])}')
-    logger.info(f'New lon: {float(point_data["lon"][0])}')
+    # Pull the exact lat and lon values from the original dataset 
+    selected_lat = float(ds['lat'].isel(time = 0, south_north = int(y_idx), west_east = int(x_idx)).values)
+    selected_lon = float(ds['lon'].isel(time = 0, south_north = int(y_idx), west_east = int(x_idx)).values)
+
+    logger.info(f'New lat: {selected_lat}')
+    logger.info(f'New lon: {selected_lon}')
 
     return point_data
 
@@ -122,7 +127,7 @@ def trend_plt(var, obs, raw, debiased, save = False):
     logger.info(f'Creating trend plot for {var}.')
 
     # Initialize plot
-    fig, ax = plt.subplots(figsize = (12, 6))
+    fig, ax = plt.subplots(4, 1, figsize = (12, 6), sharex = True)
 
     # Take the spatial average of each dataset 
     obs_mean = obs.mean(dim = ['lat', 'lon'])
@@ -186,7 +191,7 @@ def trend_plt(var, obs, raw, debiased, save = False):
     # Opt to save image to sub directory
     if save:
         save_path = current_dir / 'figures' / f'trend_{var}.png'
-        plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
+        fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Trend plot saved to: {save_path}')
 
 def sample(data, var):
@@ -259,7 +264,7 @@ def cdf_masked(data):
         logger.error('Failed to generate mask for data.')
         return
 
-def cdf_plt(var, obs, debiased, dates, lat, lon, save = False):
+def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save_name, save = True):
     """
     Create a plot of the cumulative distribution function for each of the given datasets.
     Data will be reduced to the given locations and dates. Dates must be str(%Y/%m/%d).
@@ -281,36 +286,36 @@ def cdf_plt(var, obs, debiased, dates, lat, lon, save = False):
         fig, ax = plt.subplots(1, len(dates), figsize = (12, 6))
 
     # Slice dataset to a specific location
-    obs_sel = loc_sel(obs, lat, lon)
-    # raw_sel = loc_sel(raw, lat, lon)
-    debiased_sel = loc_sel(debiased, lat, lon)
+    obs_sel = loc_sel(obs, var, lat, lon)
+    raw_sel = loc_sel(raw, var, lat, lon)
+    debiased_sel = loc_sel(debiased, var, lat, lon)
 
     for i, date in enumerate(dates):
         # Slice dataset down to a given window size centered on date
         # Default window size is 31 days
         window_size = 31
         obs_window = running_window_slice(obs_sel, date, window_size)
-        # raw_window = running_window_slice(raw_sel, date, window_size)
+        raw_window = running_window_slice(raw_sel, date, window_size)
         debiased_window = running_window_slice(debiased_sel, date, window_size)
 
         # Slice into historical and future periods
-        # raw_window_hist = raw_window.sel(time = raw_window.time.dt.year.isin(range(1985, 2015)))
-        # raw_window_fut = raw_window.sel(time = raw_window.time.dt.year.isin(range(2015, 2100)))
+        raw_window_hist = raw_window.sel(time = raw_window.time.dt.year.isin(range(1985, 2015)))
+        raw_window_fut = raw_window.sel(time = raw_window.time.dt.year.isin(range(2015, 2100)))
         debiased_window_hist = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(1985, 2015)))
         debiased_window_fut = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(2015, 2100)))
 
         # Calculate a CDF for each array
-        obs_cdf = ECDF(obs_window[var].values.flatten())
-        # raw_hist_cdf = ECDF(raw_window_hist[var].values.flatten())
-        # raw_fut_cdf = ECDF(raw_window_fut[var].values.flatten())
-        debiased_hist_cdf = ECDF(debiased_window_hist[var].values.flatten())
-        debiased_fut_cdf = ECDF(debiased_window_fut[var].values.flatten())
+        obs_cdf = ECDF(obs_window)
+        raw_hist_cdf = ECDF(raw_window_hist)
+        raw_fut_cdf = ECDF(raw_window_fut)
+        debiased_hist_cdf = ECDF(debiased_window_hist)
+        debiased_fut_cdf = ECDF(debiased_window_fut)
         logger.info(f'CDFs calculated for {date}.')
 
         # Mask CDF outputs
         obs_x, obs_y = cdf_masked(obs_cdf)
-        # raw_hist_x, raw_hist_y = cdf_masked(raw_hist_cdf)
-        # raw_fut_x, raw_fut_y = cdf_masked(raw_fut_cdf)
+        raw_hist_x, raw_hist_y = cdf_masked(raw_hist_cdf)
+        raw_fut_x, raw_fut_y = cdf_masked(raw_fut_cdf)
         debiased_hist_x, debiased_hist_y = cdf_masked(debiased_hist_cdf)
         debiased_fut_x, debiased_fut_y = cdf_masked(debiased_fut_cdf)
 
@@ -319,35 +324,40 @@ def cdf_plt(var, obs, debiased, dates, lat, lon, save = False):
             obs_x, 
             obs_y, 
             'k-',
-            label = 'Observations'
+            label = 'Observations', 
+            rasterized = True
         )
 
-        # ax[i].plot(
-        #     raw_hist_x,
-        #     raw_hist_y,
-        #     'r-.',
-        #     label = 'Historical WRF Output'
-        # )
+        ax[i].plot(
+            raw_hist_x,
+            raw_hist_y,
+            'r-.',
+            label = 'Historical WRF Output', 
+            rasterized = True
+        )
 
-        # ax[i].plot(
-        #     raw_fut_x, 
-        #     raw_fut_y, 
-        #     'r-',
-        #     label = 'Future WRF Output'
-        # )
+        ax[i].plot(
+            raw_fut_x, 
+            raw_fut_y, 
+            'r-',
+            label = 'Future WRF Output',
+            rasterized = True
+        )
 
         ax[i].plot(
             debiased_hist_x,
             debiased_hist_y,
             'g-.',
-            label = 'Historical Debiased WRF'
+            label = 'Historical Debiased WRF',
+            rasterized = True
         )
 
         ax[i].plot(
             debiased_fut_x, 
             debiased_fut_y, 
             'g-',
-            label = 'Future Debiased WRF'
+            label = 'Future Debiased WRF',
+            rasterized = True
         )
 
         # Adjust plot format settings for each subplot
@@ -360,15 +370,15 @@ def cdf_plt(var, obs, debiased, dates, lat, lon, save = False):
     # Global plot settings
     handles, labels = ax[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc = 'upper left', bbox_to_anchor = (0.95, 0.95), frameon = True)
-    plt.tight_layout()
+    # plt.tight_layout()
     plt.show()
     logger.info(f'CDF plot complete for {var}.')
 
     # Opt to save image to sub directory
     if save:
         date_str = '_'.join(map(str, dates)) # Pull out items from dates to add to filename
-        save_path = current_dir / 'figures' / f'cdf_{var}_{date_str}_lat:{float(debiased_sel["lat"][0]):.2f}_lon:{float(debiased_sel["lon"][0]):.2f}.png' # Pull actual grid points used
-        plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
+        save_path = current_dir / 'figures' / save_name
+        fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'CDF plot saved to: {save_path}')
 
 def calc_stat(data, var, stat = 'mean'):
@@ -422,9 +432,9 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
 
     logger.info(f'Obs dataset type: {type(obs)}')
     # Slice dataset to a specific location
-    obs_sel = loc_sel(obs, lat, lon)
-    raw_sel = loc_sel(raw, lat, lon)
-    debiased_sel = loc_sel(debiased, lat, lon)
+    obs_sel = loc_sel(obs, var, lat, lon)
+    raw_sel = loc_sel(raw, var, lat, lon)
+    debiased_sel = loc_sel(debiased, var, lat, lon)
     logger.info(f'Obs dataset type after location selection {type(obs_sel)}')
 
     # Create list of dates
@@ -562,7 +572,7 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
     if save:
         stat_str = '_'.join(map(str, stats)) # Pull out items from stat to add to filename
         save_path = current_dir / 'figures' / f'annual_scatter_{var}_{stat_str}_lat:{float(debiased_sel["lat"][0]):.2f}_lon:{float(debiased_sel["lon"][0]):.2f}.png' # Save using actual lat and lon values used
-        plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
+        fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Annual scatter plot saved to: {save_path}')
 
 def bias_scatter(var, raw, debiased, save = False):
@@ -636,7 +646,7 @@ def bias_scatter(var, raw, debiased, save = False):
     # Opt to save image to sub directory
     if save:
         save_path = current_dir / 'figures' / f'bias_scatter_{var}.png'
-        plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
+        fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Bias scatter plot saved to: {save_path}')
 
 def elevation_data(wrf_output_location):
@@ -780,7 +790,7 @@ def min_n_max_bias(var, raw, debiased, save = False):
     # Opt to save image to sub directory
     if save:
         save_path = current_dir / 'figures' / f'min_max_bias_{var}.png'
-        plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
+        fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Bias map saved to: {save_path}')
 
 def seasonal_bias(var, raw, debiased, save = False):
@@ -859,7 +869,7 @@ def seasonal_bias(var, raw, debiased, save = False):
     # Opt to save image to sub directory
     if save:
         save_path = current_dir / 'figures' / f'spatial_bias_{var}.png'
-        plt.savefig(save_path, dpi = 300, bbox_inches = 'tight')
+        fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Seasonal bias map saved to: {save_path}')
 
 # Catch silent errors and report to log file
@@ -873,8 +883,8 @@ def main(var, wrf_output_location, elevation = False):
     obs_path = glob.glob(str(parent_dir / 'gridMET' / f'*{var}*.nc'))
     obs = xr.open_dataset(obs_path[0], decode_times = True)
 
-    # raw_path = glob.glob(str(parent_dir / 'daily' / f'*{var}*.nc'))
-    # raw = xr.open_dataset(raw_path[0], decode_times = True)
+    raw_path = glob.glob(str(parent_dir / 'daily' / f'*{var}*.nc'))
+    raw = xr.open_dataset(raw_path[0], decode_times = True)
 
     debiased_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*test.nc'))
     debiased = xr.open_dataset(debiased_path[0], decode_times = True)
@@ -888,10 +898,10 @@ def main(var, wrf_output_location, elevation = False):
     # trend = trend_plt(var, obs, raw, debiased, save = True)
 
     # CDF plots for SLC Airport
-    cdf = cdf_plt(var, obs, debiased, dates = ['1985-01-15', '1985-03-15', '1985-06-15', '1985-10-15'], lat = lat, lon = lon, save = True) 
+    cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-04-15', '1985-07-15', '1985-10-15'], lat = lat, lon = lon, save_name = f'cdf_slc_airport_{var}',save = True) 
     
     # seasonal = seasonal_bias(var, raw, debiased, save = False)
-    # bias_map = min_n_max_bias(var, raw, debiased, save = True) # OOM kill (chunking didn't work might need to try mannual chunking)
+    bias_map = min_n_max_bias(var, raw, debiased, save = True) # OOM kill (chunking didn't work might need to try mannual chunking)
     # bias = bias_scatter(var, raw, debiased, save = True)
 
 # ======================
@@ -914,5 +924,12 @@ if __name__ == '__main__':
     logger.success(f'Debiasing process completed!')
     logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
 
-    # Force script to stop running once code is finished
-    sys.exit(0)
+
+
+
+
+
+
+
+
+# %%

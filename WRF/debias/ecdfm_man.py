@@ -1,3 +1,4 @@
+#%%
 """
 Author: Sydney Smith
 Date Created: September 29, 2026
@@ -155,7 +156,7 @@ class vectorized_ECDF(StepFunc3D):
         sorted_x = np.sort(arr, axis = 0)
 
         # Generate a 1D array of percentiles based on the number of observations in the time axis
-        percentile_1d = np.arange(1, nobs +1, dtype = float) / nobs
+        percentile_1d = np.arange(1, nobs + 1, dtype = float) / nobs
    
         # Broadcast the percentile values to each location 
         sorted_y = np.broadcast_to(percentile_1d[:, None, None], sorted_x.shape).copy() # Add None for the lat and lon dims so it knows to stretch over those
@@ -339,24 +340,24 @@ def apply_to_date(obs: xr.Dataset, hist, raw, var, date) -> np.ndarray:
 
     # Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
     obs_sliced = running_window_slice(obs, date)
-    logger.info(f'NaNs in obs running window: {float(obs_sliced[var].isnull().sum().values)}')
+    logger.info(f'NaNs in obs running window: {float(np.isnan(obs_sliced).sum())}')
 
     hist_sliced = running_window_slice(hist, date)
-    logger.info(f'NaNs in hist running window: {float(hist_sliced[var].isnull().sum().values)}')
+    logger.info(f'NaNs in hist running window: {float(np.isnan(hist_sliced).sum())}')
 
     raw_sliced = running_window_slice(raw, date)
-    logger.info(f'NaNs in raw running window: {float(raw_sliced[var].isnull().sum().values)}')
+    logger.info(f'NaNs in raw running window: {float(np.isnan(raw_sliced).sum())}')
     logger.info('Datasets sliced into running windows.')
 
     # End function if NaNs are present in the source data
-    if obs_sliced[var].isnull().any() or hist_sliced[var].isnull().any() or raw_sliced[var].isnull().any():
+    if np.isnan(obs_sliced).any() or np.isnan(hist_sliced).any() or np.isnan(raw_sliced).any():
         logger.error('NaNs detected in source data.')
         return NotImplementedError
 
     # Create CDFs from sliced datasets
-    obs_cdf = ECDF(obs_sliced[var].values.flatten())
-    hist_cdf = ECDF(hist_sliced[var].values.flatten())
-    raw_cdf = ECDF(raw_sliced[var].values.flatten())
+    obs_cdf = ECDF(obs_sliced)
+    hist_cdf = ECDF(hist_sliced)
+    raw_cdf = ECDF(raw_sliced)
 
     # Select day of interest and create mask
     day = int(date.strftime('%d'))
@@ -374,7 +375,7 @@ def apply_to_date(obs: xr.Dataset, hist, raw, var, date) -> np.ndarray:
     logger.info(raw_date)
 
     # Use raw_cdf like a function to find all of the percentiles in raw_date
-    raw_percentiles = raw_cdf(raw_date[var].values)
+    raw_percentiles = raw_cdf(raw_date)
     logger.info(f'Percentile values for raw data: {raw_percentiles}')
     logger.info(f'NaNs in raw_percentiles: {float(np.isnan(raw_percentiles).sum())}')
 
@@ -430,13 +431,13 @@ def ECDFM(obs, raw, var, lat = 40.788, lon = -111.978, vectorized = True):
 
     if not vectorized:
         # Select specific location of interest (choses nearest possible location)
-        obs = loc_sel(obs, lat = lat, lon = lon)
+        obs = loc_sel(obs, var, lat = lat, lon = lon)
         logger.info(f'NaNs at selected obs location: {float(obs[var].isnull().sum().values)}')
-        hist = loc_sel(hist, lat = lat, lon = lon)
+        hist = loc_sel(hist, var, lat = lat, lon = lon)
         logger.info(f'NaNs at selected hist location: {float(hist[var].isnull().sum().values)}')
-        raw = loc_sel(raw, lat = lat, lon = lon)
+        raw = loc_sel(raw, var, lat = lat, lon = lon)
         logger.info(f'NaNs at selected raw location: {float(raw[var].isnull().sum().values)}')
-        logger.info(raw[var])
+        logger.info(raw)
 
     # Make copy of raw_loc to plug debiased data into
     template = raw.copy(deep = True)
@@ -515,6 +516,30 @@ def np_nan_loc(arr):
     """
     return np.argwhere(np.isnan(arr))
 
+def detrend_ds(ds, var, deg = 1):
+
+    # Calculate the data's mean
+    data_avg = np.mean(ds[var].values)
+
+    # Detrend the raw model data
+    ds_fit_line = ds.polyfit(dim = 'time', deg = deg) # One degree is for a linear fit
+    
+    # Create the trend line based on fitted slope and y-intercept at each location
+    ds_trend = xr.polyval(ds['time'], ds_fit_line[f'{var}_polyfit_coefficients'])
+
+    # Subtract the trend from the dataset
+    detrended_ds = ds - ds_trend
+
+    # Close out of unnecessary datasets
+    ds_fit_line.close()
+    ds.close()
+
+    return detrended_ds, ds_trend
+
+def retrend_ds(ds, var, trend):
+    retrended_ds = ds + trend
+    return retrended_ds
+
 # Catch silent errors and report to log file
 @logger.catch 
 def main(var, data_location, vectorized = True, save = True):
@@ -522,30 +547,22 @@ def main(var, data_location, vectorized = True, save = True):
     obs_path = glob.glob(str(data_location / 'gridMET' / f'*{var}*.nc'))
     obs = xr.open_dataset(obs_path[0], decode_times = True)
 
-    raw_path = glob.glob(str(data_location / 'daily' / f'*{var}*.nc'))
-    raw = xr.open_dataset(raw_path[0], decode_times = True)
-
-    # Detrend the raw model data
-    obs_fit_line = obs.polyfit(dim = 'time', deg = 1)
-    raw_fit_line = raw.polyfit(dim = 'time', deg = 1) # deg = 1 is for a linear fit line
-    
-    # Create the trend line based on fitted slope and y-intercept at each location
-    obs_trend = xr.polyval(obs['time'], obs_fit_line[f'{var}_polyfit_coefficients'])
-    raw_trend = xr.polyval(raw['time'], raw_fit_line[f'{var}_polyfit_coefficients'])
+    mod_path = glob.glob(str(data_location / 'daily' / f'*{var}_cdo*.nc'))
+    mod = xr.open_dataset(mod_path[0], decode_times = True)
 
     # Subtract the trend from the dataset
-    detrended_obs = obs - obs_trend
-    detrended_raw = raw - raw_trend
+    detrended_obs, obs_trend = detrend_ds(obs, var)
+    detrended_mod, mod_trend = detrend_ds(mod, var)
 
     # Set location of interest as SLC airport
     lat = 40.788
     lon = -111.978
 
     # Pass datasets to debiaser
-    debiased = ECDFM(detrended_obs, detrended_raw, var, lat, lon, vectorized = vectorized)
+    debiased_mod = ECDFM(detrended_obs, detrended_mod, var, lat, lon, vectorized = vectorized)
 
     # TODO: retrend data
-    retrended = debiased + raw_trend
+    retrended_mod = retrend_ds(debiased_mod, var, mod_trend)
 
     if save:
         # Create output directory to store new cleaned files
@@ -554,20 +571,23 @@ def main(var, data_location, vectorized = True, save = True):
 
         # Generate save name for debiased data
         detrended_obs_path = os.path.join(output_dir, f'detrended_obs_{var}.nc')
-        detrended_raw_path = os.path.join(output_dir, f'detrended_raw_{var}.nc')
-        debiased_path = os.path.join(output_dir, f'debiased_{var}.nc')
+        detrended_mod_path = os.path.join(output_dir, f'detrended_mod_{var}.nc')
+        debiased_mod_path = os.path.join(output_dir, f'debiased_{var}.nc')
         out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_test.nc')
 
         # Save data to netCDF file
         detrended_obs.to_netcdf(detrended_obs_path)
-        detrended_raw.to_netcdf(detrended_raw_path)
-        debiased.to_netcdf(debiased_path)
-        retrended.to_netcdf(out_path)
+        detrended_mod.to_netcdf(detrended_mod_path)
+        debiased_mod.to_netcdf(debiased_mod_path)
+        retrended_mod.to_netcdf(out_path)
         logger.success(f'File saved to: {out_path}')
 
     # Close out of data
-    debiased.close()
-    # retrended.close()
+    del mod_trend
+    detrended_obs.close()
+    detrended_mod.close()
+    debiased_mod.close()
+    retrended_mod.close()
 
 # if __name__ == '__main__':
 
@@ -589,3 +609,23 @@ def main(var, data_location, vectorized = True, save = True):
 #     # Force script to stop running once code is finished
 #     sys.exit(0)
 
+
+
+var = 'tmmx'
+
+mod_path = glob.glob(str(current_dir / 'daily' / f'*{var}*.nc'))
+ds = xr.open_dataset(mod_path[0], decode_times = True)
+
+# Calculate the data's mean
+data_avg = np.mean(ds[var].values)
+
+# Detrend the raw model data
+ds_fit_line = ds.polyfit(dim = 'time', deg = 1) # One degree is for a linear fit
+
+# Create the trend line based on fitted slope and y-intercept at each location
+ds_trend = xr.polyval(ds['time'], ds_fit_line[f'{var}_polyfit_coefficients'])
+
+# Subtract the trend from the dataset
+detrended_ds = ds - ds_trend
+
+# %%
