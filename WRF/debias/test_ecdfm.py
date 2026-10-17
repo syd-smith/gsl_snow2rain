@@ -7,6 +7,7 @@ Date Created: October 16, 2026
 import numpy as np
 import pandas as pd
 from pathlib import Path
+import pytest
 import sys
 import xarray as xr
 
@@ -70,28 +71,38 @@ def dummy_trend_ds():
 # - Test Fucntions - 
 # ==================
 
-# def test_trend():
+def test_trend():
 
-# Call dumy dataset
-data = dummy_trend_ds()
+    # Call dumy dataset
+    data = dummy_trend_ds()
 
-# Take the average value of the dataset and broadcast mean value to a shape that matches dataset
-data_avg = np.mean(data['tmmx'].isel(lat = 0, lon = 0).values)
-data_avg_3D = np.broadcast_to(data_avg, data['tmmx'].shape)
+    # Pull the time values from the dataset
+    time_idx = np.arange(len(data['time'].values))
+    # Use numpy to find y=mx+b
+    slope, intercept = np.polyfit(time_idx, data['tmmx'].isel(lat = 0, lon = 0).values, 1)
 
-# Calculate the trend as the difference of the data and the mean at each location
-trend = data['tmmx'] - data_avg_3D
+    # Ensure that what numpy calculated is close to what was expected
+    assert np.isclose(slope, 0.2)
+    assert np.isclose(intercept, data['tmmx'].values[0][0][0])
 
-# Detrend the data
-detrended_data = data - trend
+    # Calculate the trend
+    trend = (slope * time_idx) + intercept
+    trend_3D = np.broadcast_to(trend[:, None, None], data['tmmx'].shape)
 
-# Call function that is being tested
-func_detrended, func_trend = detrend_ds(data, 'tmmx')
+    # Detrend the data
+    detrended_data = data['tmmx'] - trend_3D
 
-# TODO: look into how to add mean back in detrend_ds (func in ecdfm_man.py)
+    # Calculate the data's mean and broadcast it to a 3D array
+    data_mean = np.mean(data['tmmx'].isel(lat = 0, lon = 0).values)
+    detrended_with_mean = detrended_data + data_mean
 
-assert (func_detrended['tmmx'].values == detrended_data['tmmx'].values).all()
-assert (func_trend.values == trend.values).all()
+    # Call function that is being tested
+    func_detrended, func_trend, func_avg = detrend_ds(data, 'tmmx')
+
+    # Make assertions based on manual detrending
+    np.testing.assert_allclose(func_detrended['tmmx'].values, detrended_with_mean.values, rtol = 1e-5, atol = 1e-5)
+    np.testing.assert_allclose(func_trend, trend_3D, rtol = 1e-5, atol = 1e-5)
+    assert np.isclose(func_avg.isel(lat = 0, lon = 0), data_mean)
 
 
 # %%

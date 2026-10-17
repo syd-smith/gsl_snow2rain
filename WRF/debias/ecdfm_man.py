@@ -517,9 +517,11 @@ def np_nan_loc(arr):
     return np.argwhere(np.isnan(arr))
 
 def detrend_ds(ds, var, deg = 1):
-
+    """
+    Detrended a given 3D dataset along the time dimension.
+    """
     # Calculate the data's mean
-    data_avg = np.mean(ds[var].values)
+    ds_avg = ds[var].mean(dim = 'time')
 
     # Detrend the raw model data
     ds_fit_line = ds.polyfit(dim = 'time', deg = deg) # One degree is for a linear fit
@@ -527,17 +529,26 @@ def detrend_ds(ds, var, deg = 1):
     # Create the trend line based on fitted slope and y-intercept at each location
     ds_trend = xr.polyval(ds['time'], ds_fit_line[f'{var}_polyfit_coefficients'])
 
-    # Subtract the trend from the dataset
+    # Subtract the trend from the dataset and add back its mean
     detrended_ds = ds - ds_trend
+    detrended_with_mean = detrended_ds + ds_avg
 
     # Close out of unnecessary datasets
     ds_fit_line.close()
     ds.close()
 
-    return detrended_ds, ds_trend
+    return detrended_with_mean, ds_trend, ds_avg
 
-def retrend_ds(ds, var, trend):
-    retrended_ds = ds + trend
+def retrend_ds(ds, var, trend, ds_mean):
+    """
+    Retrend data based on the detrending process from the function above.
+    """
+    # Start by removing the mean that was added to the dataset
+    mean_out = ds - ds_mean
+
+    # Retrended the data using its fit line
+    retrended_ds = mean_out + trend
+
     return retrended_ds
 
 # Catch silent errors and report to log file
@@ -551,8 +562,8 @@ def main(var, data_location, vectorized = True, save = True):
     mod = xr.open_dataset(mod_path[0], decode_times = True)
 
     # Subtract the trend from the dataset
-    detrended_obs, obs_trend = detrend_ds(obs, var)
-    detrended_mod, mod_trend = detrend_ds(mod, var)
+    detrended_obs, obs_trend, obs_mean = detrend_ds(obs, var)
+    detrended_mod, mod_trend, mod_mean = detrend_ds(mod, var)
 
     # Set location of interest as SLC airport
     lat = 40.788
@@ -562,7 +573,7 @@ def main(var, data_location, vectorized = True, save = True):
     debiased_mod = ECDFM(detrended_obs, detrended_mod, var, lat, lon, vectorized = vectorized)
 
     # TODO: retrend data
-    retrended_mod = retrend_ds(debiased_mod, var, mod_trend)
+    retrended_mod = retrend_ds(debiased_mod, var, mod_trend, mod_mean)
 
     if save:
         # Create output directory to store new cleaned files
@@ -610,22 +621,3 @@ def main(var, data_location, vectorized = True, save = True):
 #     sys.exit(0)
 
 
-
-var = 'tmmx'
-
-mod_path = glob.glob(str(current_dir / 'daily' / f'*{var}*.nc'))
-ds = xr.open_dataset(mod_path[0], decode_times = True)
-
-# Calculate the data's mean
-data_avg = np.mean(ds[var].values)
-
-# Detrend the raw model data
-ds_fit_line = ds.polyfit(dim = 'time', deg = 1) # One degree is for a linear fit
-
-# Create the trend line based on fitted slope and y-intercept at each location
-ds_trend = xr.polyval(ds['time'], ds_fit_line[f'{var}_polyfit_coefficients'])
-
-# Subtract the trend from the dataset
-detrended_ds = ds - ds_trend
-
-# %%
