@@ -3,15 +3,15 @@
 #SBATCH --cluster=notchpeak
 #SBATCH --account=uspcasw-np
 #SBATCH --partition=uspcasw-np
-#SBATCH --job-name=tmmn
+#SBATCH --job-name=tmmx
 #SBATCH --time=3-00:00:00
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=tmmn.out    
-#SBATCH --error=tmmn.err
+#SBATCH --output=tmmx.out    
+#SBATCH --error=tmmx.err
  
-# variable="tmmn"
+# variable="tmmx"
 # domain="03"
 # WRF_in="/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/"
 # MET_in="/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/"
@@ -29,11 +29,11 @@ PYTHON_BIN="/uufs/chpc.utah.edu/common/home/strong-group7/sydney/miniforge3_envs
 # Call python file
 # ${PYTHON_BIN} spatial_chunks.py 
 
-module load cdo
+# module load cdo
 
-echo "Starting concatenation for ${var}..."
-cdo cat daily/${var}/*.nc wrfout/wrf_raw_GSLBIP_multimodel_ssp245_${var}_cdo.nc
-echo "Concatenation complete!"
+# echo "Starting concatenation for ${var}..."
+# cdo cat daily/${var}/*.nc wrfout/wrf_raw_GSLBIP_multimodel_ssp245_${var}_cdo.nc
+# echo "Concatenation complete!"
 
 # Call python file
 ${PYTHON_BIN} ecdfm_man.py 

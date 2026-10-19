@@ -56,7 +56,7 @@ logger.debug(f'Log files saved to {log_path}')
 # ==================
 
 class StepFunc3D:
-    def __init__(self, x, y, ival = 0, sorted = False, side = 'left'):
+    def __init__(self, x, y, ival = 0, sorted = False, side = 'right'):
         # Check that the side parameter is valid
         if side.lower() not in ['right', 'left']:
             raise ValueError('Side can take the values "right" or "left."')
@@ -584,30 +584,33 @@ def main(var, data_location, vectorized = True, save = True):
         logger.success(f'File saved to: {out_path}')
 
     # Close out of data
+    del obs_trend
+    del obs_mean
     del mod_trend
+    del mod_mean
     detrended_obs.close()
     detrended_mod.close()
     debiased_mod.close()
     retrended_mod.close()
 
-# if __name__ == '__main__':
+if __name__ == '__main__':
 
-#     # Track program time in log files
-#     start = time.perf_counter()
-#     logger.info('Beginning execution.')
+    # Track program time in log files
+    start = time.perf_counter()
+    logger.info('Beginning execution.')
 
-#     # Only inputs required
-#     main(
-#             var = 'tmmn',
-#             data_location = current_dir,
-#             save = True
-#             )
+    # Only inputs required
+    main(
+            var = 'tmmx',
+            data_location = current_dir,
+            save = True
+            )
 
-#     # Report of runtime at completion 
-#     logger.success(f'Debiasing process completed!')
-#     logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
+    # Report of runtime at completion 
+    logger.success(f'Debiasing process completed!')
+    logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
 
-#     # Force script to stop running once code is finished
-#     sys.exit(0)
+    # Force script to stop running once code is finished
+    sys.exit(0)
 
 
