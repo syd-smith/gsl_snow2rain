@@ -249,19 +249,9 @@ def vect_app(obs, hist, raw, var, date):
     obs_cdf = vectorized_ECDF(obs_sliced[var].values)
     hist_cdf = vectorized_ECDF(hist_sliced[var].values)
     raw_cdf = vectorized_ECDF(raw_sliced[var].values)
-
-    # Select day of interest and create mask
-    day = int(date.strftime('%d'))
-    month = int(date.strftime('%m'))
-    mask = (raw.time.dt.month == month) & (raw.time.dt.day == day)
-
-    # Skip dates that don't exist
-    if not mask.any():
-        logger.warning(f'No date found for {date}.')
-        return None
     
-    # Apply mask to dataset
-    raw_date = raw.where(mask, drop = True) # This should select day of interest across all years in ds
+    # Mask dataset to given date
+    raw_date = doy_mask(raw, date) # This should select day of interest across all years in ds
     logger.info(f'Dataset sliced down to date of interest: {date}')
     logger.info(raw_date)
 
