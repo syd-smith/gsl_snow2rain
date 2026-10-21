@@ -5,7 +5,7 @@
 #SBATCH --partition=uspcasw-np
 #SBATCH --job-name=tmmx_sep
 #SBATCH --time=3-00:00:00
-#SBATCH --mem=20GB
+#SBATCH --mem=15GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --output=tmmx_sep.out    
@@ -36,7 +36,7 @@ PYTHON_BIN="/uufs/chpc.utah.edu/common/home/strong-group7/sydney/miniforge3_envs
 # echo "Concatenation complete!"
 
 # Call python file
-${PYTHON_BIN} test_ecdfm.py 
+${PYTHON_BIN} ecdfm_man.py 
 
 
 

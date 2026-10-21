@@ -120,69 +120,154 @@ def loc_sel(ds, var, lat, lon):
 
     return point_data
 
-def trend_plt(var, obs, raw, debiased, save = False):
+def running_window_slice(data, date, window_length = 31):
+    """"
+    Select only data within the window length (measured in number of days and centered around
+    date given) across the entire dataset.
     """
-    Create a graph of raw WRF output data, WRF debiased, and observational data to compare trend.
+    # Ensure date is a string in the proper format
+    date_pd = pd.to_datetime(date)
+    date = date_pd.strftime('%Y-%m-%d')
+
+    # Ensure the running window length is an odd number (has to be odd for the given day to sit in the exact middle of the window)
+    if window_length % 2 == 0:
+        logger.error('Window length must be an odd numer.')
+        return
+
+    # Cut running window in half to center it around selected date
+    half_window = (window_length - 1) / 2
+    logger.info(f'Half window size: {half_window}')
+
+    # Select bounds of the running window
+    start_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).month
+    start_day = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).day
+    stop_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = half_window)).month
+    stop_day = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = half_window)).day
+
+    # Slice data to running window
+    window = data.sel(time = (data.time.dt.month == start_month) & (data.time.dt.day >= start_day) | (data.time.dt.month == stop_month) & (data.time.dt.day <= stop_day))
+    logger.info(window)
+    logger.info(f'Data sliced to {window_length} day running window for {date}.')
+
+    return window
+
+def best_fit(var, ds):
     """
-    logger.info(f'Creating trend plot for {var}.')
+    Calculate the line of best fit for plotting. 
+    """
+    # Turn timestamps into numerical values
+    x_vals = pd.to_numeric(ds.time)
+
+    # Calculate the slope and intercept for the data
+    ds_slope, ds_intercept = np.polyfit(x_vals, ds[var].values)
+
+    # Make the line of best fit
+    best_line = ds_slope * x_vals + ds_intercept 
+
+    return best_line
+
+
+def trend_plt(var, obs, mod, detrended_obs, detrended_mod, date, lat, lon, save = False):
+    """
+    Create a graph of model WRF output data, observational data, and both detrended datasets to verify detrending 
+    was successful. Data plotted is from a single location and a 31 day running window centered around a given date.
+    """
+    logger.info(f'Creating detrending verification plot for {var}.')
 
     # Initialize plot
-    fig, ax = plt.subplots(4, 1, figsize = (12, 6), sharex = True)
+    fig, ax = plt.subplots(2, 1, figsize = (12, 6), sharex = True)
 
-    # Take the spatial average of each dataset 
-    obs_mean = obs.mean(dim = ['lat', 'lon'])
-    raw_mean = raw.mean(dim = ['lat', 'lon'])
-    debiased_mean = debiased.mean(dim = ['lat', 'lon'])
+    # Slice data down to a location of interest
+    obs_loc = loc_sel(obs, var, lat, lon)
+    mod_loc = loc_sel(mod, var, lat, lon)
+    dt_obs_loc = loc_sel(detrended_obs, var, lat, lon)
+    dt_mod_loc = loc_sel(detrended_mod, var, lat, lon)
 
-    # Resample the data to yearly averages for trend calculations
-    obs_yearly = obs_mean[var].resample(time = '1YS').mean()
-    raw_yearly = raw_mean[var].resample(time = '1YS').mean()
-    debiased_yearly = debiased_mean[var].resample(time = '1YS').mean()
-    
-    # Log metadata on yearly averages for debugging
-    logger.info(obs_yearly)
-    logger.info(obs_yearly.time)
-    logger.info(f'Averages complete for {var} trend calculations.')
+    # Take the running window of each dataset
+    obs_sliced = running_window_slice(obs_loc, date)
+    mod_sliced = running_window_slice(mod_loc, date)
+    dt_obs_sliced = running_window_slice(dt_obs_loc, date)
+    dt_mod_sliced = running_window_slice(dt_mod_loc, date)
+  
+    logger.info(f'Location slicing and date selection completed for {var} detrend plot.')
     
     # Graph obs data
-    ax.plot(
-        obs_yearly.time,
-        obs_yearly.values, 
-        'k-', 
+    ax[0].plot(
+        obs_sliced.time,
+        obs_sliced.values, 
+        'k-.', 
         alpha = 0.9, 
-        label = 'Observation'
+        label = 'Obs'
     )
+
+    ax[0].plot(
+            obs_sliced.time,
+            best_fit(var, obs_sliced), 
+            'k-', 
+            alpha = 0.9, 
+        )
 
     # Graph raw WRF output data
-    ax.plot(
-        raw_yearly.time, 
-        raw_yearly.values, 
-        'r-', 
+    ax[0].plot(
+        mod_sliced.time, 
+        mod_sliced.values, 
+        'r-.', 
         alpha = 0.9,
-        label = 'Raw WRF Output'
+        label = 'WRF'
     )
 
-    # Graph debiased WRF data
-    ax.plot(
-        debiased_yearly.time,
-        debiased_yearly.values, 
-        'g-',
+    ax[0].plot(
+        mod_sliced.time,
+        best_fit(var, mod_sliced), 
+        'r-', 
         alpha = 0.9, 
-        label = 'Debiased WRF'
     )
 
-    # Adjust plot format settings
-    ax.set_title(f'Climatological Trend of {title[var]} Averaged Across Study Region')
-    ax.set_ylabel(f'{var} ({units[var]})')
-    ax.set_xlabel('Time')
-    ax.grid(True, linestyle = '--', alpha = 0.5)
-    ax.legend(frameon = True)
+    # Graph detrended obs data
+    ax[1].plot(
+        dt_obs_sliced.time,
+        dt_obs_sliced.values, 
+        'k-.',
+        alpha = 0.9, 
+        label = 'Detrended Obs'
+    )
 
-    # Set labels for the x axis
-    ticks = [f'{yr}-01-01T00:00:00.000000000' for yr in range(1985, 2100, 5)]
-    labels = [f'{yr}' for yr in range(1985, 2100, 5)]
-    ax.set_xticks(ticks = ticks, labels = labels)
-    ax.tick_params(axis = 'x', rotation = 45)
+    ax[1].plot(
+        dt_obs_sliced.time,
+        best_fit(var, dt_obs_sliced), 
+        'k-', 
+        alpha = 0.9, 
+    )
+
+    # Graph detrended WRF model output data
+    ax[1].plot(
+        dt_mod_sliced.time,
+        dt_mod_sliced.values, 
+        'r-.',
+        alpha = 0.9, 
+        label = 'Detrended WRF'
+    )
+
+    ax[1].plot(
+        dt_mod_sliced.time,
+        best_fit(var, dt_mod_sliced), 
+        'r-', 
+        alpha = 0.9, 
+    )
+
+    for i in [0, 1]:
+        # Adjust plot format settings
+        ax[i].set_title(f'Trended vs. Detrended {title[var]} Data')
+        ax[i].set_ylabel(f'{var} ({units[var]})')
+        ax[i].set_xlabel('Time')
+        ax[i].grid(True, linestyle = '--', alpha = 0.5)
+        ax[i].legend(frameon = True)
+
+        # Set labels for the x axis
+        ticks = [f'{yr}-01-01T00:00:00.000000000' for yr in range(1985, 2100, 5)]
+        labels = [f'{yr}' for yr in range(1985, 2100, 5)]
+        ax[i].set_xticks(ticks = ticks, labels = labels)
+        ax[i].tick_params(axis = 'x', rotation = 45)
 
     plt.tight_layout()
     plt.show()
@@ -212,33 +297,6 @@ def sample(data, var):
     logger.info(f'Random sample of {var} taken from dataset. Sample size: {sample_size}.')
 
     return sample
-
-def running_window_slice(data, date, window_length = 31):
-    """"
-    Select only data within the window length (measured in number of days and centered around
-    date given) across the entire dataset.
-    """
-    # Ensure the running window length is an odd number (has to be odd for the given day to sit in the exact middle of the window)
-    if window_length % 2 == 0:
-        logger.error('Window length must be an odd numer.')
-        return
-
-    # Cut running window in half to center it around selected date
-    half_window = (window_length - 1) / 2
-    logger.info(f'Half window size: {half_window}')
-
-    # Select bounds of the running window
-    start_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).month
-    start_day = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).day
-    stop_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = half_window)).month
-    stop_day = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = half_window)).day
-
-    # Slice data to running window
-    window = data.sel(time = (data.time.dt.month == start_month) & (data.time.dt.day >= start_day) | (data.time.dt.month == stop_month) & (data.time.dt.day <= stop_day))
-    logger.info(window)
-    logger.info(f'Data sliced to {window_length} day running window for {date}.')
-
-    return window
 
 def cdf_masked(data):
     """
@@ -883,8 +941,14 @@ def main(var, wrf_output_location, elevation = False):
     obs_path = glob.glob(str(parent_dir / 'gridMET' / f'*{var}*.nc'))
     obs = xr.open_dataset(obs_path[0], decode_times = True)
 
-    raw_path = glob.glob(str(parent_dir / 'daily' / f'*{var}*.nc'))
-    raw = xr.open_dataset(raw_path[0], decode_times = True)
+    mod_path = glob.glob(str(parent_dir / 'daily' / f'*{var}*.nc'))
+    mod = xr.open_dataset(mod_path[0], decode_times = True)
+
+    dt_obs_path = glob.glob(str(parent_dir / 'wrfout' / 'detrended_obs_tmmx.nc'))
+    dt_obs = xr.open_dataset(dt_obs_path[0], decode_times = True)
+
+    dt_mod_path = glob.glob(str(parent_dir / 'wrfout' / 'detrended_mod_tmmx.nc'))
+    dt_mod = xr.open_dataset(dt_mod_path[0], decode_times = True)
 
     debiased_path = glob.glob(str(parent_dir / 'wrfout_hist' / f'*{var}*test.nc'))
     debiased = xr.open_dataset(debiased_path[0], decode_times = True)
@@ -895,10 +959,9 @@ def main(var, wrf_output_location, elevation = False):
 
     # Test Plots
     # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True) 
-    # trend = trend_plt(var, obs, raw, debiased, save = True)
-
+    trend = trend_plt(var, obs, mod, dt_obs, dt_mod, '1985-03-05', lat, lon, save = True)
     # CDF plots for SLC Airport
-    cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-04-15', '1985-07-15', '1985-10-15'], lat = lat, lon = lon, save_name = f'cdf_slc_airport_{var}_hist_only',save = True) 
+    # cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-04-15', '1985-07-15', '1985-10-15'], lat = lat, lon = lon, save_name = f'cdf_slc_airport_{var}_hist_only',save = True) 
     
     # seasonal = seasonal_bias(var, raw, debiased, save = False)
     bias_map = min_n_max_bias(var, raw, debiased, save = True) # OOM kill (chunking didn't work might need to try mannual chunking)

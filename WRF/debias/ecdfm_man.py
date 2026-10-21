@@ -1,4 +1,3 @@
-#%%
 """
 Author: Sydney Smith
 Date Created: September 29, 2026
@@ -14,8 +13,7 @@ import pandas as pd
 from pathlib import Path
 from scipy.interpolate import interp1d
 from statsmodels.distributions.empirical_distribution import ECDF, monotone_fn_inverter
-from statsmodels.distributions.empirical_distribution import (
-    StepFunction)
+from statsmodels.distributions.empirical_distribution import StepFunction
 import sys
 import time
 import xarray as xr
@@ -430,8 +428,8 @@ def ECDFM(obs, hist, mod, var, lat = 40.788, lon = -111.978, vectorized = True):
     template = mod.copy(deep = True)
 
     # Select first and last day in dataset
-    first_date = mod.isel(time = 0)
-    last_date = mod.isel(time = -1)
+    first_date = mod.isel(time = 0).time.values
+    last_date = mod.isel(time = -1).time.values
 
     # Create date range that spans a calendar year (select a year that is a leap year)
     dates = pd.date_range(start = f"1988-{first_date.strftime('%m-%d')}", end = f"1988-{last_date.strftime('%m-%d')}", freq = 'D') 
@@ -497,6 +495,11 @@ def detrend_ds(ds, var, deg = 1):
     # Calculate the data's mean
     ds_avg = ds[var].mean(dim = 'time')
 
+    # End function if NaNs are present in the source data
+    if ds['time'].isnull().any():
+        logger.error('NaNs detected in source data.')
+        return NotImplementedError
+
     # Detrend the mod model data
     ds_fit_line = ds.polyfit(dim = 'time', deg = deg) # One degree is for a linear fit
     
@@ -535,40 +538,50 @@ def main(var, data_location, vectorized = True, save = True):
     mod_path = glob.glob(str(data_location / 'daily' / f'*{var}*.nc'))
     mod = xr.open_dataset(mod_path[0], decode_times = True)
 
+    # Slice model data down to historical and future period respectively
+    hist = mod.sel(time = slice('1985-01-01', '2014-12-31'))
+    fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
+
     # Subtract the trend from the dataset
     detrended_obs, obs_trend, obs_mean = detrend_ds(obs, var)
-    detrended_mod, mod_trend, mod_mean = detrend_ds(mod, var)
+    detrended_hist, hist_trend, hist_mean = detrend_ds(hist, var)
+    detrended_fut, fut_trend, fut_mean = detrend_ds(fut, var)
 
     # Set location of interest as SLC airport
     lat = 40.788
     lon = -111.978
 
-    # Slice model data down to historical period
-    hist = detrended_mod.sel(time = slice('1985-01-01', '2014-12-31'))
-
     # Pass datasets to debiaser
-    debiased_mod = ECDFM(detrended_obs, hist, detrended_mod, var, lat, lon, vectorized = vectorized)
+    debiased_hist = ECDFM(detrended_obs, detrended_hist, detrended_hist, var, lat, lon, vectorized = vectorized)
+    debiased_fut = ECDFM(detrended_obs, detrended_hist, detrended_fut, var, lat, lon, vectorized = vectorized)
 
     # Put trend back in data
-    retrended_mod = retrend_ds(debiased_mod, var, mod_trend, mod_mean)
+    retrended_hist = retrend_ds(debiased_hist, var, hist_trend, hist_mean)
+    retrended_fut = retrend_ds(debiased_fut, var, fut_trend, fut_mean)
 
     if save:
         # Create output directory to store new cleaned files
-        output_dir = current_dir / 'wrfout'
+        output_dir = current_dir / 'wrfout_sep'
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
         detrended_obs_path = os.path.join(output_dir, f'detrended_obs_{var}.nc')
-        detrended_mod_path = os.path.join(output_dir, f'detrended_mod_{var}.nc')
-        debiased_mod_path = os.path.join(output_dir, f'debiased_{var}.nc')
-        out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_test.nc')
+        detrended_hist_path = os.path.join(output_dir, f'detrended_hist_{var}.nc')
+        detrended_fut_path = os.path.join(output_dir, f'detrended_fut_{var}.nc')
+        debiased_hist_path = os.path.join(output_dir, f'debiased_hist_{var}.nc')
+        debiased_fut_path = os.path.join(output_dir, f'debiased_fut_{var}.nc')
+        retrended_hist_path = os.path.join(output_dir, f'retrended_hist_{var}.nc')
+        retrended_fut_path = os.path.join(output_dir, f'retrended_fut_{var}.nc')
 
         # Save data to netCDF file
         detrended_obs.to_netcdf(detrended_obs_path)
-        detrended_mod.to_netcdf(detrended_mod_path)
-        debiased_mod.to_netcdf(debiased_mod_path)
-        retrended_mod.to_netcdf(out_path)
-        logger.success(f'File saved to: {out_path}')
+        detrended_hist.to_netcdf(detrended_hist_path)
+        detrended_fut.to_netcdf(detrended_fut_path)
+        debiased_hist.to_netcdf(debiased_hist_path)
+        debiased_fut.to_netcdf(debiased_fut_path)
+        retrended_hist.to_netcdf(retrended_hist_path)
+        retrended_fut.to_netcdf(retrended_fut_path)
+        logger.success(f'File saved to: {output_dir}')
 
     # Close out of data
     del obs_trend
@@ -576,26 +589,30 @@ def main(var, data_location, vectorized = True, save = True):
     del mod_trend
     del mod_mean
     detrended_obs.close()
-    detrended_mod.close()
-    debiased_mod.close()
-    retrended_mod.close()
+    detrended_hist.close()
+    detrended_fut.close()
+    debiased_hist.close()
+    debiased_fut.close()
+    retrended_hist.close()
+    retrended_fut.close()
 
-# if __name__ == '__main__':
+if __name__ == '__main__':
 
-#     # Track program time in log files
-#     start = time.perf_counter()
-#     logger.info('Beginning execution.')
+    # Track program time in log files
+    start = time.perf_counter()
+    logger.info('Beginning execution.')
 
-#     # Only inputs required
-#     main(
-#             var = 'tmmx',
-#             data_location = current_dir,
-#             save = True
-#             )
+    # Only inputs required
+    main(
+            var = 'tmmx',
+            data_location = current_dir,
+            save = True
+            )
 
-#     # Report of runtime at completion 
-#     logger.success(f'Debiasing process completed!')
-#     logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
+    # Report of runtime at completion 
+    logger.success(f'Debiasing process completed!')
+    logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
 
-#     # Force script to stop running once code is finished
-#     sys.exit(0)
+    # Force script to stop running once code is finished
+    sys.exit(0)
+
