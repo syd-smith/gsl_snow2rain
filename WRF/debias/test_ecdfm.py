@@ -4,13 +4,15 @@ Author: Sydney Smith
 Date Created: October 16, 2026
 """
 
+import glob
 import numpy as np
+import os
 import pandas as pd
 from pathlib import Path
 import pytest
 import sys
 import xarray as xr
-#%%
+
 # ==================================
 # - Establish Relative File Path - 
 # ==================================
@@ -18,7 +20,7 @@ import xarray as xr
 current_dir = Path(__file__).resolve().parent
 sys.path.append(str(current_dir))
 
-from ecdfm_man import StepFunc3D, vectorized_ECDF, doy_mask, vect_app, detrend_ds, retrend_ds
+from ecdfm_man import StepFunc3D, vectorized_ECDF, ECDFM, doy_mask, vect_app, detrend_ds, retrend_ds
 from plots.validation import running_window_slice, loc_sel
 
 # ======================
@@ -87,44 +89,44 @@ def ds_dummy(start_day = '1985-01-01', stop_day = '1985-12-31', var = 'tmmx', tr
 
     return clean_ds
 
-# def ds_simplest_case():
-# Define dimension values
-time_vals = pd.date_range(start = '1985-01-01', end = '1985-01-05', freq = 'D')
+def ds_simplest_case():
+    # Define dimension values
+    time_vals = pd.date_range(start = '1985-01-01', end = '1985-01-05', freq = 'D')
 
-# Create location dims and broadcast over time dim
-lats = np.array([[40, 42], [45, 47]])
-lat_vals = np.broadcast_to(lats, (len(time_vals), *lats.shape))
-lons = np.array([[-105, -107], [-110, -112]])
-lon_vals = np.broadcast_to(lons, (len(time_vals), *lons.shape))
+    # Create location dims and broadcast over time dim
+    lats = np.array([[40, 42], [45, 47]])
+    lat_vals = np.broadcast_to(lats, (len(time_vals), *lats.shape))
+    lons = np.array([[-105, -107], [-110, -112]])
+    lon_vals = np.broadcast_to(lons, (len(time_vals), *lons.shape))
 
-# Ensure lat and lon vals have same shape
-assert lat_vals.shape == lon_vals.shape, 'Lat and lon values must have same shape.'
+    # Ensure lat and lon vals have same shape
+    assert lat_vals.shape == lon_vals.shape, 'Lat and lon values must have same shape.'
 
-# Create data
-data = np.linspace(1, len(time_vals), len(time_vals))
-var_data = np.broadcast_to(data[:, None, None], lon_vals.shape)
+    # Create data
+    data = np.linspace(1, len(time_vals), len(time_vals))
+    var_data = np.broadcast_to(data[:, None, None], lon_vals.shape)
 
-# Ensure variable data is same shape as location data
-assert var_data.shape == lon_vals.shape
+    # Ensure variable data is same shape as location data
+    assert var_data.shape == lon_vals.shape
 
-# Recognize that dims should be 3D
-dims_3d = ('time', 'south_north', 'west_east')
+    # Recognize that dims should be 3D
+    dims_3d = ('time', 'south_north', 'west_east')
 
-# Create new dataset to save data to
-clean_ds = xr.Dataset(
-    {
-        'tmmx': (['time', 'lat', 'lon'], var_data)
-    },
-    coords = {
-        'time': ('time', time_vals),
-        'lat': (dims_3d, lat_vals),
-        'lon': (dims_3d, lon_vals)
-    }
-)
+    # Create new dataset to save data to
+    clean_ds = xr.Dataset(
+        {
+            'tmmx': (['time', 'lat', 'lon'], var_data)
+        },
+        coords = {
+            'time': ('time', time_vals),
+            'lat': (dims_3d, lat_vals),
+            'lon': (dims_3d, lon_vals)
+        }
+    )
 
-    # return clean_ds
+    return clean_ds
 
-def ds_dist(seed, dist):
+def ds_dist(seed, dist, min_val = 275, max_val = 310, mean_val = 293):
     # Initialize number generator
     rng = np.random.default_rng(seed = seed)
 
@@ -144,24 +146,22 @@ def ds_dist(seed, dist):
     n = len(time_vals)
 
     if dist == 'uniform':
-        data = rng.uniform(low = 275, high = 300, size = n)
+        data = rng.uniform(low = min_val, high = max_val, size = n)
 
     elif dist == 'normal':
         # loc: center of bell curve
         # scale: width of distribution
         # size: number of samples to generate
-        data = rng.normal(loc = 287.5, scale = 3, size = n)
+        data = rng.normal(loc = mean_val, scale = 3, size = n)
 
     elif dist == 'gamma':
         # Gamma distributions have a baseline of zero so generate temp in excess of 275
         temp_excess = rng.gamma(3, 4, size = n) # mean excess is shape * scale = 20
-        data = 275 + temp_excess
+        data = min_val + temp_excess
 
     elif dist == 'beta':
         # Beta distribution strictly calculates values between 0 and 1
         # If alpha>beta then skewed to right
-        min_val = 275
-        max_val = 300
         beta_vals = rng.beta(a = 4, b = 3, size = n)
 
         # Scale beta_vals to the actual range
@@ -193,10 +193,9 @@ def ds_dist(seed, dist):
 
     return clean_ds
 
-#%%
-# ==================
-# - Test Fucntions - 
-# ==================
+# ====================
+# - Pytest Fucntions - 
+# ====================
 
 def test_trend():
 
@@ -407,3 +406,184 @@ class Testvectorized_ECDF:
         # Ensure they match
         assert np.array_equal(ecdf_inv, x_sorted)
 
+# ========================
+# - Other Test Fucntions - 
+# ========================
+
+def nan_test(var):
+    """
+    Returns location of Nans in debiased data.
+    """
+    fpath = glob.glob(str(current_dir / 'wrfout' / f'*{var}*.nc'))
+    debiased = xr.open_dataset(fpath[0], decode_times = True)
+
+    nan_data = debiased[var].where(debiased[var].isnull(), drop = True)
+
+    return nan_data
+
+def np_nan_loc(arr):
+    """
+    Find locations of NaNs in np.array.
+    """
+    return np.argwhere(np.isnan(arr))
+
+def debias_hist_only(var, vectorized = True, save = True):
+    """
+    Debias historical period in isolation.
+    """
+
+    # Open datasets
+    obs_path = glob.glob(str(current_dir / 'gridMET' / f'*{var}*.nc'))
+    obs = xr.open_dataset(obs_path[0], decode_times = True)
+
+    # Slice model data down to only historical period
+    mod_path = glob.glob(str(current_dir / 'daily' / f'*{var}*.nc'))
+    mod = xr.open_dataset(mod_path[0], decode_times = True).sel(time = slice('1985-01-01', '2014-12-31'))
+
+    # Subtract the trend from the dataset
+    detrended_obs, obs_trend, obs_mean = detrend_ds(obs, var)
+    detrended_mod, mod_trend, mod_mean = detrend_ds(mod, var)
+
+    # Set location of interest as SLC airport
+    lat = 40.788
+    lon = -111.978
+
+    # Slice model data down to historical period
+    hist = detrended_mod.sel(time = slice('1985-01-01', '2014-12-31'))
+
+    # Pass datasets to debiaser
+    debiased_mod = ECDFM(detrended_obs, hist, detrended_mod, var, lat, lon, vectorized = vectorized)
+
+    # Put trend back in data
+    retrended_mod = retrend_ds(debiased_mod, var, mod_trend, mod_mean)
+
+    if save:
+        # Create output directory to store new cleaned files
+        output_dir = current_dir / 'wrfout_hist'
+        os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
+
+        # Generate save name for debiased data
+        detrended_obs_path = os.path.join(output_dir, f'detrended_obs_{var}.nc')
+        detrended_mod_path = os.path.join(output_dir, f'detrended_mod_{var}.nc')
+        debiased_mod_path = os.path.join(output_dir, f'debiased_{var}.nc')
+        out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_test.nc')
+
+        # Save data to netCDF file
+        detrended_obs.to_netcdf(detrended_obs_path)
+        detrended_mod.to_netcdf(detrended_mod_path)
+        debiased_mod.to_netcdf(debiased_mod_path)
+        retrended_mod.to_netcdf(out_path)
+
+    # Close out of data
+    del obs_trend
+    del obs_mean
+    del mod_trend
+    del mod_mean
+    detrended_obs.close()
+    detrended_mod.close()
+    debiased_mod.close()
+    retrended_mod.close()
+
+def debias_dist(var, obs_dist, mod_dist, save_name, vectorized = True):
+    """
+    Debias historical period in isolation.
+    """
+
+    # Open datasets
+    obs = ds_dist(seed = 20, dist = 'uniform')
+    mod = ds_dist(seed = 25, dist = 'uniform', min_val = 280, max_val = 315)
+
+    # Subtract the trend from the dataset
+    detrended_obs, obs_trend, obs_mean = detrend_ds(obs, var)
+    detrended_mod, mod_trend, mod_mean = detrend_ds(mod, var)
+
+    # Set location of interest as SLC airport
+    lat = 40.788
+    lon = -111.978
+
+    # Pass datasets to debiaser
+    debiased_mod = ECDFM(detrended_obs, detrended_mod, var, lat, lon, vectorized = vectorized)
+
+    # Put trend back in data
+    retrended_mod = retrend_ds(debiased_mod, var, mod_trend, mod_mean)
+
+    # Create output directory to store new cleaned files
+    output_dir = current_dir / save_name
+    os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
+
+    # Generate save name for debiased data
+    detrended_obs_path = os.path.join(output_dir, f'detrended_obs_{var}.nc')
+    detrended_mod_path = os.path.join(output_dir, f'detrended_mod_{var}.nc')
+    debiased_mod_path = os.path.join(output_dir, f'debiased_{var}.nc')
+    out_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_test.nc')
+
+    # Save data to netCDF file
+    detrended_obs.to_netcdf(detrended_obs_path)
+    detrended_mod.to_netcdf(detrended_mod_path)
+    debiased_mod.to_netcdf(debiased_mod_path)
+    retrended_mod.to_netcdf(out_path)
+
+def fut_hist_isolated(var, vectorized = True, save = True):
+    """
+    Debias future period in isolation.
+    """
+
+    # Open datasets
+    obs_path = glob.glob(str(current_dir / 'gridMET' / f'*{var}*.nc'))
+    obs = xr.open_dataset(obs_path[0], decode_times = True)
+
+    # Slice model data down to only historical period
+    mod_path = glob.glob(str(current_dir / 'daily' / f'*{var}*.nc'))
+    mod = xr.open_dataset(mod_path[0], decode_times = True).sel(time = slice('1985-01-01', '2014-12-31'))
+
+    # Separate into future and historical
+    hist = mod.sel(time = slice('1985-01-01', '2014-12-31'))
+    fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
+
+    # Subtract the trend from the dataset
+    detrended_obs, obs_trend, obs_mean = detrend_ds(obs, var)
+    detrended_hist, hist_trend, hist_mean = detrend_ds(hist, var)
+    detrended_fut, fut_trend, fut_mean = detrend_ds(fut, var)
+
+    # Set location of interest as SLC airport
+    lat = 40.788
+    lon = -111.978
+
+    # Pass datasets to debiaser
+    debiased_hist = ECDFM(detrended_obs, detrended_hist, detrended_hist, var, lat, lon, vectorized = vectorized)
+    debiased_fut = ECDFM(detrended_obs, detrended_hist, detrended_fut, var, lat, lon, vectorized = vectorized)
+
+    # Put trend back in data
+    retrended_hist = retrend_ds(debiased_hist, var, hist_trend, hist_mean)
+    retrended_fut = retrend_ds(debiased_fut, var, fut_trend, fut_mean)
+
+    # Slice dataset down to correct time periods
+    retrended_hist = retrended_hist.sel(time = slice('1985-01-01', '2014-12-31'))
+    retrended_fut = retrended_fut.sel(time = slice('2015-01-01', '2099-12-31'))
+
+    if save:
+        # Create output directory to store new cleaned files
+        output_dir = current_dir / 'wrfout_hist_fut_sep'
+        os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
+
+        # Generate save name for debiased data
+        detrended_obs_path = os.path.join(output_dir, f'detrended_obs_{var}.nc')
+        detrended_hist_path = os.path.join(output_dir, f'detrended_hist_{var}.nc')
+        detrended_fut_path = os.path.join(output_dir, f'detrended_fut_{var}.nc')
+        debiased_hist_path = os.path.join(output_dir, f'debiased_hist_{var}.nc')
+        debiased_fut_path = os.path.join(output_dir, f'debiased_fut_{var}.nc')
+        retrended_hist_path = os.path.join(output_dir, f'retrended_hist_{var}.nc')
+        retrended_fut_path = os.path.join(output_dir, f'retrended_fut_{var}.nc')
+
+        # Save data to netCDF file
+        detrended_obs.to_netcdf(detrended_obs_path)
+        detrended_hist.to_netcdf(detrended_hist_path)
+        detrended_fut.to_netcdf(detrended_fut_path)
+        debiased_hist.to_netcdf(debiased_hist_path)
+        debiased_fut.to_netcdf(debiased_fut_path)
+        retrended_hist.to_netcdf(retrended_hist_path)
+        retrended_fut.to_netcdf(retrended_fut_path)
+
+fut_hist_isolated('tmmx')
+
+# debias_hist_only('tmmx', current_dir)

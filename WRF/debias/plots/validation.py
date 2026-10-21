@@ -302,7 +302,7 @@ def cdf_plt(var, obs, raw, debiased, dates, lat, lon, save_name, save = True):
         raw_window_hist = raw_window.sel(time = raw_window.time.dt.year.isin(range(1985, 2015)))
         raw_window_fut = raw_window.sel(time = raw_window.time.dt.year.isin(range(2015, 2100)))
         debiased_window_hist = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(1985, 2015)))
-        debiased_window_fut = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(2015, 2100)))
+        debiased_window_fut = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(1985, 2015))) # TODO: change back to futute period
 
         # Calculate a CDF for each array
         obs_cdf = ECDF(obs_window)
@@ -886,7 +886,7 @@ def main(var, wrf_output_location, elevation = False):
     raw_path = glob.glob(str(parent_dir / 'daily' / f'*{var}*.nc'))
     raw = xr.open_dataset(raw_path[0], decode_times = True)
 
-    debiased_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*test.nc'))
+    debiased_path = glob.glob(str(parent_dir / 'wrfout_hist' / f'*{var}*test.nc'))
     debiased = xr.open_dataset(debiased_path[0], decode_times = True)
 
     # Set location of interest as SLC airport
@@ -898,7 +898,7 @@ def main(var, wrf_output_location, elevation = False):
     # trend = trend_plt(var, obs, raw, debiased, save = True)
 
     # CDF plots for SLC Airport
-    cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-04-15', '1985-07-15', '1985-10-15'], lat = lat, lon = lon, save_name = f'cdf_slc_airport_{var}',save = True) 
+    cdf = cdf_plt(var, obs, raw, debiased, dates = ['1985-01-15', '1985-04-15', '1985-07-15', '1985-10-15'], lat = lat, lon = lon, save_name = f'cdf_slc_airport_{var}_hist_only',save = True) 
     
     # seasonal = seasonal_bias(var, raw, debiased, save = False)
     bias_map = min_n_max_bias(var, raw, debiased, save = True) # OOM kill (chunking didn't work might need to try mannual chunking)
