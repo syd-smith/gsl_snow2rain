@@ -428,8 +428,8 @@ def ECDFM(obs, hist, mod, var, lat = 40.788, lon = -111.978, vectorized = True):
     template = mod.copy(deep = True)
 
     # Select first and last day in dataset
-    first_date = mod.isel(time = 0).time.values
-    last_date = mod.isel(time = -1).time.values
+    first_date = pd.to_datetime(mod.isel(time = 0).time.values)
+    last_date = pd.to_datetime(mod.isel(time = -1).time.values)
 
     # Create date range that spans a calendar year (select a year that is a leap year)
     dates = pd.date_range(start = f"1988-{first_date.strftime('%m-%d')}", end = f"1988-{last_date.strftime('%m-%d')}", freq = 'D') 
@@ -550,14 +550,42 @@ def main(var, data_location, vectorized = True, save = True):
     # Set location of interest as SLC airport
     lat = 40.788
     lon = -111.978
-
-    # Pass datasets to debiaser
-    debiased_hist = ECDFM(detrended_obs, detrended_hist, detrended_hist, var, lat, lon, vectorized = vectorized)
+    
+    # Pass datasets to debiaser 
     debiased_fut = ECDFM(detrended_obs, detrended_hist, detrended_fut, var, lat, lon, vectorized = vectorized)
 
     # Put trend back in data
-    retrended_hist = retrend_ds(debiased_hist, var, hist_trend, hist_mean)
     retrended_fut = retrend_ds(debiased_fut, var, fut_trend, fut_mean)
+
+    # Intermediate save for future data
+    if save:
+        # Create output directory to store new cleaned files
+        output_dir = current_dir / 'wrfout_sep'
+        os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
+
+        # Generate save name for debiased data
+        detrended_fut_path = os.path.join(output_dir, f'detrended_fut_{var}.nc')
+        debiased_fut_path = os.path.join(output_dir, f'debiased_fut_{var}.nc')
+        retrended_fut_path = os.path.join(output_dir, f'retrended_fut_{var}.nc')
+
+        # Save data to netCDF file
+        detrended_fut.to_netcdf(detrended_fut_path)
+        debiased_fut.to_netcdf(debiased_fut_path)
+        retrended_fut.to_netcdf(retrended_fut_path)
+        logger.success(f'Future files saved to: {output_dir}')
+
+    # Close out of unnecessary data
+    del fut_trend
+    del fut_mean
+    detrended_fut.close()
+    debiased_fut.close()
+    retrended_fut.close()
+
+    # Pass datasets to debiaser 
+    debiased_hist = ECDFM(detrended_obs, detrended_hist, detrended_hist, var, lat, lon, vectorized = vectorized)
+
+     # Put trend back in data
+    retrended_hist = retrend_ds(debiased_hist, var, hist_trend, hist_mean)
 
     if save:
         # Create output directory to store new cleaned files
@@ -567,34 +595,25 @@ def main(var, data_location, vectorized = True, save = True):
         # Generate save name for debiased data
         detrended_obs_path = os.path.join(output_dir, f'detrended_obs_{var}.nc')
         detrended_hist_path = os.path.join(output_dir, f'detrended_hist_{var}.nc')
-        detrended_fut_path = os.path.join(output_dir, f'detrended_fut_{var}.nc')
         debiased_hist_path = os.path.join(output_dir, f'debiased_hist_{var}.nc')
-        debiased_fut_path = os.path.join(output_dir, f'debiased_fut_{var}.nc')
         retrended_hist_path = os.path.join(output_dir, f'retrended_hist_{var}.nc')
-        retrended_fut_path = os.path.join(output_dir, f'retrended_fut_{var}.nc')
 
         # Save data to netCDF file
         detrended_obs.to_netcdf(detrended_obs_path)
         detrended_hist.to_netcdf(detrended_hist_path)
-        detrended_fut.to_netcdf(detrended_fut_path)
         debiased_hist.to_netcdf(debiased_hist_path)
-        debiased_fut.to_netcdf(debiased_fut_path)
         retrended_hist.to_netcdf(retrended_hist_path)
-        retrended_fut.to_netcdf(retrended_fut_path)
-        logger.success(f'File saved to: {output_dir}')
+        logger.success(f'Historical files saved to: {output_dir}')
 
-    # Close out of data
-    del obs_trend
-    del obs_mean
-    del mod_trend
-    del mod_mean
-    detrended_obs.close()
-    detrended_hist.close()
-    detrended_fut.close()
-    debiased_hist.close()
-    debiased_fut.close()
-    retrended_hist.close()
-    retrended_fut.close()
+        # Close out of data
+        del obs_trend
+        del obs_mean
+        del hist_trend
+        del hist_mean
+        detrended_obs.close()
+        detrended_hist.close()
+        debiased_hist.close()
+        retrended_hist.close()
 
 if __name__ == '__main__':
 

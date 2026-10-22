@@ -3,13 +3,13 @@
 #SBATCH --cluster=notchpeak
 #SBATCH --account=uspcasw-np
 #SBATCH --partition=uspcasw-np
-#SBATCH --job-name=trend
+#SBATCH --job-name=cdf
 #SBATCH --time=1-00:00:00
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=trend.out    
-#SBATCH --error=trend.err
+#SBATCH --output=cdf.out    
+#SBATCH --error=cdf.err
 
 # Load in software
 module load miniforge3

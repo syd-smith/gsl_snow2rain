@@ -5,7 +5,7 @@
 #SBATCH --partition=uspcasw-np
 #SBATCH --job-name=tmmx_sep
 #SBATCH --time=3-00:00:00
-#SBATCH --mem=15GB
+#SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --output=tmmx_sep.out    
