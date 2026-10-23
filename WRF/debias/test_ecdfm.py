@@ -20,8 +20,7 @@ import xarray as xr
 current_dir = Path(__file__).resolve().parent
 sys.path.append(str(current_dir))
 
-from ecdfm_man import StepFunc3D, vectorized_ECDF, ECDFM, doy_mask, vect_app, detrend_ds, retrend_ds
-from plots.validation import running_window_slice, loc_sel
+from ecdfm_man import StepFunc3D, vectorized_ECDF, ECDFM, doy_mask, vect_app, detrend_ds, retrend_ds, running_window_slice, loc_sel
 
 # ======================
 # - Create Dummy Data - 

@@ -11,9 +11,6 @@ import numpy as np
 import os
 import pandas as pd
 from pathlib import Path
-from scipy.interpolate import interp1d
-from statsmodels.distributions.empirical_distribution import ECDF, monotone_fn_inverter
-from statsmodels.distributions.empirical_distribution import StepFunction
 import sys
 import time
 import xarray as xr
@@ -198,6 +195,74 @@ class vectorized_ECDF(StepFunc3D):
 # ---- Functions ----
 # =====================
 
+def loc_sel(ds, var, lat, lon):
+    """
+    Select the nearest point to the lat and lon dims passed.
+    """
+    logger.info(f'Selecting nearest location to {lat}, {lon}.')
+
+    # Select single array along time dim to reduce ds size
+    lat_2d = ds['lat'].isel(time = 0)
+    lon_2d = ds['lon'].isel(time = 0)
+
+    # Find the vector distance from the coordinates passed to every coordinate pair on the dataset's grid
+    dist = (lat_2d - (lat)) ** 2 + (lon_2d - (lon)) ** 2
+
+    # Find the min distance and pull out its x and y index values
+    dist_min = dist.argmin()
+    logger.info(f'Point selected is {dist_min} from {lat}, {lon}.')
+    y_idx, x_idx = np.unravel_index(dist_min, dist.shape)
+    logger.info(f'Min distance is located at {x_idx}, {y_idx}.')
+    
+    # Pull grid's spatial dims dynamically
+    spatial_dims = ds[var].dims
+
+    # Select min distance grid point using isel
+    point_data = ds[var].isel({
+        spatial_dims[1]: y_idx,
+        spatial_dims[2]: x_idx
+    }).squeeze()
+
+    # Pull the exact lat and lon values from the original dataset 
+    selected_lat = float(ds['lat'].isel(time = 0, south_north = int(y_idx), west_east = int(x_idx)).values)
+    selected_lon = float(ds['lon'].isel(time = 0, south_north = int(y_idx), west_east = int(x_idx)).values)
+
+    logger.info(f'New lat: {selected_lat}')
+    logger.info(f'New lon: {selected_lon}')
+
+    return point_data
+
+def running_window_slice(data, date, window_length = 31):
+    """"
+    Select only data within the window length (measured in number of days and centered around
+    date given) across the entire dataset.
+    """
+    # Ensure date is a string in the proper format
+    date_pd = pd.to_datetime(date)
+    date = date_pd.strftime('%Y-%m-%d')
+
+    # Ensure the running window length is an odd number (has to be odd for the given day to sit in the exact middle of the window)
+    if window_length % 2 == 0:
+        logger.error('Window length must be an odd numer.')
+        return
+
+    # Cut running window in half to center it around selected date
+    half_window = (window_length - 1) / 2
+    logger.info(f'Half window size: {half_window}')
+
+    # Select bounds of the running window
+    start_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).month
+    start_day = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).day
+    stop_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = half_window)).month
+    stop_day = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = half_window)).day
+
+    # Slice data to running window
+    window = data.sel(time = (data.time.dt.month == start_month) & (data.time.dt.day >= start_day) | (data.time.dt.month == stop_month) & (data.time.dt.day <= stop_day))
+    logger.info(window)
+    logger.info(f'Data sliced to {window_length} day running window for {date}.')
+
+    return window
+
 def doy_mask(ds, date):
     """
     Mask a dataset to include only data for a given day of year. Date must be a valid date that 
@@ -221,7 +286,7 @@ def doy_mask(ds, date):
 
     return masked
 
-def vect_app(obs, hist, mod, var, date):
+def vect_app(obs, hist, mod, var, date, period = 'future'):
     """
     Debias model data for a given date as a vectorized process. 3D array should be organized as
     (time, lat, lon) where debiasing is performed along the time axis. All data inputs should 
@@ -243,34 +308,56 @@ def vect_app(obs, hist, mod, var, date):
         logger.error('NaNs detected in source data.')
         return NotImplementedError
 
-    # Create CDFs from sliced datasets
-    obs_cdf = vectorized_ECDF(obs_sliced[var].values)
-    hist_cdf = vectorized_ECDF(hist_sliced[var].values)
-    mod_cdf = vectorized_ECDF(mod_sliced[var].values)
+    if period == 'historical':
+        # Create CDFs from sliced datasets
+        obs_cdf = vectorized_ECDF(obs_sliced[var].values)
+        hist_cdf = vectorized_ECDF(hist_sliced[var].values)
+
+        # Mask dataset to given date
+        hist_date = doy_mask(hist, date) # This should select day of interest across all years in ds
+        logger.info(f'Dataset sliced down to date of interest: {date}')
+        logger.info(hist_date)
     
-    # Mask dataset to given date
-    mod_date = doy_mask(mod, date) # This should select day of interest across all years in ds
-    logger.info(f'Dataset sliced down to date of interest: {date}')
-    logger.info(mod_date)
+        # Use mod_cdf like a function to find all of the percentiles in mod_date
+        hist_percentiles = hist_cdf(hist_date[var].values)
+        logger.info(f'Percentile values for model data: {hist_percentiles}')
+        logger.info(f'NaNs in hist_percentiles: {float(np.isnan(hist_percentiles).sum())}')
 
-    # Use mod_cdf like a function to find all of the percentiles in mod_date
-    mod_percentiles = mod_cdf(mod_date[var].values)
-    logger.info(f'Percentile values for mod data: {mod_percentiles}')
-    logger.info(f'NaNs in mod_percentiles: {float(np.isnan(mod_percentiles).sum())}')
+        # Perform bias adjustment
+        # Find data points for every percentile in mod_percentiles
+        mod_bias_corrected = obs_cdf.inverse(hist_percentiles)
 
-    # Find data points for every percentile in mod_percentiles
-    obs_vals = obs_cdf.inverse(mod_percentiles)
-    logger.info(f'NaNs in obs_vals: {float(np.isnan(obs_vals).sum())}')
-    logger.info(f'Obs values for given percentiles: {obs_vals}')
+    # Assumes everyhting else is debiasing data independent of the historical period
+    else:
 
-    hist_vals = hist_cdf.inverse(mod_percentiles)
-    logger.info(f'NaNs in hist_vals: {float(np.isnan(hist_vals).sum())}')
-    logger.info(f'Historical values for given percentiles: {hist_vals}')
+        # Create CDFs from sliced datasets
+        obs_cdf = vectorized_ECDF(obs_sliced[var].values)
+        hist_cdf = vectorized_ECDF(hist_sliced[var].values)
+        mod_cdf = vectorized_ECDF(mod_sliced[var].values)
+        
+        # Mask dataset to given date
+        mod_date = doy_mask(mod, date) # This should select day of interest across all years in ds
+        logger.info(f'Dataset sliced down to date of interest: {date}')
+        logger.info(mod_date)
 
-    # Perform bias adjustment
-    bias = hist_vals - obs_vals
-    logger.info(f'NaNs in bias: {float(np.isnan(bias).sum())}')
-    mod_bias_corrected = mod_date[var].values - bias
+        # Use mod_cdf like a function to find all of the percentiles in mod_date
+        mod_percentiles = mod_cdf(mod_date[var].values)
+        logger.info(f'Percentile values for mod data: {mod_percentiles}')
+        logger.info(f'NaNs in mod_percentiles: {float(np.isnan(mod_percentiles).sum())}')
+
+        # Find data points for every percentile in mod_percentiles
+        obs_vals = obs_cdf.inverse(mod_percentiles)
+        logger.info(f'NaNs in obs_vals: {float(np.isnan(obs_vals).sum())}')
+        logger.info(f'Obs values for given percentiles: {obs_vals}')
+
+        hist_vals = hist_cdf.inverse(mod_percentiles)
+        logger.info(f'NaNs in hist_vals: {float(np.isnan(hist_vals).sum())}')
+        logger.info(f'Historical values for given percentiles: {hist_vals}')
+
+        # Perform bias adjustment
+        bias = hist_vals - obs_vals
+        logger.info(f'NaNs in bias: {float(np.isnan(bias).sum())}')
+        mod_bias_corrected = mod_date[var].values - bias
 
     # End script early if there are Nans in data
     if np.isnan(mod_bias_corrected).any():
@@ -283,146 +370,13 @@ def vect_app(obs, hist, mod, var, date):
     logger.info(f'Bias corrected max: {mod_bias_corrected.max()}')
     logger.info(f'Bias corrected min: {mod_bias_corrected.min()}')
 
-    # Close out of unwanted datasets
-    obs_sliced.close()
-    hist_sliced.close()
-    mod_sliced.close()
-    mod_date.close()
-    del obs_vals
-    del hist_vals
-    del mod_percentiles
-    gc.collect()
-
     return mod_bias_corrected
 
-def invert_ecdf(ecdf_obj):
-    """
-    Inverts a statsmodels ECDF object using its .y and .x attributes, regardless of if
-    the values are monotonic or not, with safe extrapolation to prevent NaNs.
-    """
-    # ECDF from statsmodels sets first x value to -inf which causes NaNs for very small percentiles passed to the inverted function
-    # Mask out any indefinite values to prevent possible NaNs
-    finite_mask = np.isfinite(ecdf_obj.x)
-    x_vals = ecdf_obj.x[finite_mask]
-    y_vals = ecdf_obj.y[finite_mask]
-
-    # Ensure x_vals are unique and strictly increasing for interp1d (monotonic)
-    x_unique, indices = np.unique(x_vals, return_index=True)
-    y_unique = y_vals[indices]
-
-    return interp1d(
-        y_unique, # Pass y values as x values
-        x_unique, # And vice versa
-        bounds_error = False, 
-        fill_value = 'extrapolate'  # Prevents NaNs if raw percentiles push past bounds
-    )
-
-def apply_to_date(obs: xr.Dataset, hist, mod, var, date) -> np.ndarray:
-    """
-    Debiases data for a given date by constructing a CDF using a dataset restricted to be within a 
-    running window. Date must be a valid date that exists within the dataset formatted as '%Y-%m-%d' 
-    datetime object.
-    """
-    # TODO: check how running_window_slice handles leap years (try to set calendar year to 1988 instead since it's a leap year)
-
-    # Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
-    obs_sliced = running_window_slice(obs, date)
-    logger.info(f'NaNs in obs running window: {float(np.isnan(obs_sliced).sum())}')
-
-    hist_sliced = running_window_slice(hist, date)
-    logger.info(f'NaNs in hist running window: {float(np.isnan(hist_sliced).sum())}')
-
-    mod_sliced = running_window_slice(mod, date)
-    logger.info(f'NaNs in mod running window: {float(np.isnan(mod_sliced).sum())}')
-    logger.info('Datasets sliced into running windows.')
-
-    # End function if NaNs are present in the source data
-    if np.isnan(obs_sliced).any() or np.isnan(hist_sliced).any() or np.isnan(mod_sliced).any():
-        logger.error('NaNs detected in source data.')
-        return NotImplementedError
-
-    # Create CDFs from sliced datasets
-    obs_cdf = ECDF(obs_sliced)
-    hist_cdf = ECDF(hist_sliced)
-    mod_cdf = ECDF(mod_sliced)
-
-    # Select day of interest and create mask
-    day = int(date.strftime('%d'))
-    month = int(date.strftime('%m'))
-    mask = (mod.time.dt.month == month) & (mod.time.dt.day == day)
-
-    # Skip dates that don't exist
-    if not mask.any():
-        logger.warning(f'No date found for {date}.')
-        return None
-    
-    # Apply mask to dataset
-    mod_date = mod.where(mask, drop = True) # This should select day of interest across all years in ds
-    logger.info(f'Dataset sliced down to date of interest: {date}')
-    logger.info(mod_date)
-
-    # Use mod_cdf like a function to find all of the percentiles in mod_date
-    mod_percentiles = mod_cdf(mod_date)
-    logger.info(f'Percentile values for mod data: {mod_percentiles}')
-    logger.info(f'NaNs in mod_percentiles: {float(np.isnan(mod_percentiles).sum())}')
-
-    # TODO: NaNs are appearing in obs and hist from this point on
-    # Invert hist_cdf and obs_cdf to take a percentile and output a data point
-    inv_obs = invert_ecdf(obs_cdf)
-    inv_hist = invert_ecdf(hist_cdf)
-
-    # Find data points for every percentile in mod_percentiles
-    obs_vals = inv_obs(mod_percentiles)
-    logger.info(f'NaNs in obs_vals: {float(np.isnan(obs_vals).sum())}')
-    logger.info(f'Obs values for given percentiles: {obs_vals}')
-
-    hist_vals = inv_hist(mod_percentiles)
-    logger.info(f'NaNs in hist_vals: {float(np.isnan(hist_vals).sum())}')
-    logger.info(f'Historical values for given percentiles: {hist_vals}')
-
-    # Perform bias adjustment
-    bias = hist_vals - obs_vals
-    logger.info(f'NaNs in bias: {float(np.isnan(bias).sum())}')
-    mod_bias_corrected = mod_date[var].values - bias
-
-    # End script early if there are Nans in data
-    if np.isnan(mod_bias_corrected).any():
-        logger.error(f'NaNs in debiased data: {float(np.isnan(mod_bias_corrected).sum())}')
-        logger.info(f'Nan error occured on {date}.')
-        return None
-
-    logger.info('Mod data successfully bias corrected!')
-    logger.info(mod_bias_corrected)
-    logger.info(f'Bias corrected max: {mod_bias_corrected.max()}')
-    logger.info(f'Bias corrected min: {mod_bias_corrected.min()}')
-
-    # Close out of unwanted datasets
-    obs_sliced.close()
-    hist_sliced.close()
-    mod_sliced.close()
-    mod_date.close()
-    del obs_vals
-    del hist_vals
-    del mod_percentiles
-    gc.collect()
-
-    return mod_bias_corrected
-
-def ECDFM(obs, hist, mod, var, lat = 40.788, lon = -111.978, vectorized = True):
+def ECDFM(obs, hist, mod, var, lat = 40.788, lon = -111.978, period = future):
     """
     Performs ECDFM quantile mapping debiasing process on given data based on data from a given histroical
     period and corresponding observational data. Model data should include both historical and future data. 
     """
-
-    if not vectorized:
-        # Select specific location of interest (choses nearest possible location)
-        obs = loc_sel(obs, var, lat = lat, lon = lon)
-        logger.info(f'NaNs at selected obs location: {float(obs[var].isnull().sum().values)}')
-        hist = loc_sel(hist, var, lat = lat, lon = lon)
-        logger.info(f'NaNs at selected hist location: {float(hist[var].isnull().sum().values)}')
-        mod = loc_sel(mod, var, lat = lat, lon = lon)
-        logger.info(f'NaNs at selected mod location: {float(mod[var].isnull().sum().values)}')
-        logger.info(mod)
 
     # Make copy of mod_loc to plug debiased data into
     template = mod.copy(deep = True)
@@ -438,10 +392,8 @@ def ECDFM(obs, hist, mod, var, lat = 40.788, lon = -111.978, vectorized = True):
         # Apply bias correction for single date
         logger.info(f'Date type: {type(date)}')
 
-        if vectorized:
-            debiased_doy = vect_app(obs, hist, mod, var, date)
-        else:
-            debiased_doy = apply_to_date(obs, hist, mod, var, date)
+        # Debias data for given day of year
+        debiased_doy = vect_app(obs, hist, mod, var, date, period = period)
 
         # Exit out of function if Nans occur
         if debiased_doy is None:
@@ -488,49 +440,9 @@ def ECDFM(obs, hist, mod, var, lat = 40.788, lon = -111.978, vectorized = True):
 
     return template
 
-def detrend_ds(ds, var, deg = 1):
-    """
-    Detrended a given 3D dataset along the time dimension.
-    """
-    # Calculate the data's mean
-    ds_avg = ds[var].mean(dim = 'time')
-
-    # End function if NaNs are present in the source data
-    if ds['time'].isnull().any():
-        logger.error('NaNs detected in source data.')
-        return NotImplementedError
-
-    # Detrend the mod model data
-    ds_fit_line = ds.polyfit(dim = 'time', deg = deg) # One degree is for a linear fit
-    
-    # Create the trend line based on fitted slope and y-intercept at each location
-    ds_trend = xr.polyval(ds['time'], ds_fit_line[f'{var}_polyfit_coefficients'])
-
-    # Subtract the trend from the dataset and add back its mean
-    detrended_ds = ds - ds_trend
-    detrended_with_mean = detrended_ds + ds_avg
-
-    # Close out of unnecessary datasets
-    ds_fit_line.close()
-    ds.close()
-
-    return detrended_with_mean, ds_trend, ds_avg
-
-def retrend_ds(ds, var, trend, ds_mean):
-    """
-    Retrend data based on the detrending process from the function above.
-    """
-    # Start by removing the mean that was added to the dataset
-    mean_out = ds - ds_mean
-
-    # Retrended the data using its fit line
-    retrended_ds = mean_out + trend
-
-    return retrended_ds
-
 # Catch silent errors and report to log file
 @logger.catch 
-def main(var, data_location, vectorized = True, save = True):
+def main(var, data_location, save = True):
     # Open datasets
     obs_path = glob.glob(str(data_location / 'gridMET' / f'*{var}*.nc'))
     obs = xr.open_dataset(obs_path[0], decode_times = True)
@@ -542,78 +454,46 @@ def main(var, data_location, vectorized = True, save = True):
     hist = mod.sel(time = slice('1985-01-01', '2014-12-31'))
     fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
 
-    # Subtract the trend from the dataset
-    detrended_obs, obs_trend, obs_mean = detrend_ds(obs, var)
-    detrended_hist, hist_trend, hist_mean = detrend_ds(hist, var)
-    detrended_fut, fut_trend, fut_mean = detrend_ds(fut, var)
-
     # Set location of interest as SLC airport
     lat = 40.788
     lon = -111.978
     
     # Pass datasets to debiaser 
-    debiased_fut = ECDFM(detrended_obs, detrended_hist, detrended_fut, var, lat, lon, vectorized = vectorized)
-
-    # Put trend back in data
-    retrended_fut = retrend_ds(debiased_fut, var, fut_trend, fut_mean)
+    debiased_fut = ECDFM(obs, hist, fut, var, lat, lon, period = 'future')
 
     # Intermediate save for future data
     if save:
         # Create output directory to store new cleaned files
-        output_dir = current_dir / 'wrfout_sep'
+        output_dir = current_dir / 'wrfout_no_dt'
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
-        detrended_fut_path = os.path.join(output_dir, f'detrended_fut_{var}.nc')
         debiased_fut_path = os.path.join(output_dir, f'debiased_fut_{var}.nc')
-        retrended_fut_path = os.path.join(output_dir, f'retrended_fut_{var}.nc')
-
+  
         # Save data to netCDF file
-        detrended_fut.to_netcdf(detrended_fut_path)
         debiased_fut.to_netcdf(debiased_fut_path)
-        retrended_fut.to_netcdf(retrended_fut_path)
         logger.success(f'Future files saved to: {output_dir}')
 
     # Close out of unnecessary data
-    del fut_trend
-    del fut_mean
-    detrended_fut.close()
     debiased_fut.close()
-    retrended_fut.close()
 
     # Pass datasets to debiaser 
-    debiased_hist = ECDFM(detrended_obs, detrended_hist, detrended_hist, var, lat, lon, vectorized = vectorized)
-
-     # Put trend back in data
-    retrended_hist = retrend_ds(debiased_hist, var, hist_trend, hist_mean)
+    debiased_hist = ECDFM(obs, hist, hist, var, lat, lon, period = 'historical')
 
     if save:
         # Create output directory to store new cleaned files
-        output_dir = current_dir / 'wrfout_sep'
+        output_dir = current_dir / 'wrfout_no_dt'
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
-        detrended_obs_path = os.path.join(output_dir, f'detrended_obs_{var}.nc')
-        detrended_hist_path = os.path.join(output_dir, f'detrended_hist_{var}.nc')
         debiased_hist_path = os.path.join(output_dir, f'debiased_hist_{var}.nc')
-        retrended_hist_path = os.path.join(output_dir, f'retrended_hist_{var}.nc')
 
         # Save data to netCDF file
-        detrended_obs.to_netcdf(detrended_obs_path)
-        detrended_hist.to_netcdf(detrended_hist_path)
         debiased_hist.to_netcdf(debiased_hist_path)
-        retrended_hist.to_netcdf(retrended_hist_path)
         logger.success(f'Historical files saved to: {output_dir}')
 
-        # Close out of data
-        del obs_trend
-        del obs_mean
-        del hist_trend
-        del hist_mean
-        detrended_obs.close()
-        detrended_hist.close()
-        debiased_hist.close()
-        retrended_hist.close()
+    # Close out of data
+    debiased_hist.close()
 
 if __name__ == '__main__':
 

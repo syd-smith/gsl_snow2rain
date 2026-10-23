@@ -32,6 +32,7 @@ from old.temporal_chunks import open_or_skip, get_fpaths
 
 sys.path.append(str(current_dir))
 from spatial_chunks import fix_time_coord
+from ecdfm_man import running_window_slice, loc_sel
 
 # ===================
 # - Set Up Logger - 
@@ -82,74 +83,6 @@ title = {
 # =====================
 # ---- Functions ----
 # =====================
-
-def loc_sel(ds, var, lat, lon):
-    """
-    Select the nearest point to the lat and lon dims passed.
-    """
-    logger.info(f'Selecting nearest location to {lat}, {lon}.')
-
-    # Select single array along time dim to reduce ds size
-    lat_2d = ds['lat'].isel(time = 0)
-    lon_2d = ds['lon'].isel(time = 0)
-
-    # Find the vector distance from the coordinates passed to every coordinate pair on the dataset's grid
-    dist = (lat_2d - (lat)) ** 2 + (lon_2d - (lon)) ** 2
-
-    # Find the min distance and pull out its x and y index values
-    dist_min = dist.argmin()
-    logger.info(f'Point selected is {dist_min} from {lat}, {lon}.')
-    y_idx, x_idx = np.unravel_index(dist_min, dist.shape)
-    logger.info(f'Min distance is located at {x_idx}, {y_idx}.')
-    
-    # Pull grid's spatial dims dynamically
-    spatial_dims = ds[var].dims
-
-    # Select min distance grid point using isel
-    point_data = ds[var].isel({
-        spatial_dims[1]: y_idx,
-        spatial_dims[2]: x_idx
-    }).squeeze()
-
-    # Pull the exact lat and lon values from the original dataset 
-    selected_lat = float(ds['lat'].isel(time = 0, south_north = int(y_idx), west_east = int(x_idx)).values)
-    selected_lon = float(ds['lon'].isel(time = 0, south_north = int(y_idx), west_east = int(x_idx)).values)
-
-    logger.info(f'New lat: {selected_lat}')
-    logger.info(f'New lon: {selected_lon}')
-
-    return point_data
-
-def running_window_slice(data, date, window_length = 31):
-    """"
-    Select only data within the window length (measured in number of days and centered around
-    date given) across the entire dataset.
-    """
-    # Ensure date is a string in the proper format
-    date_pd = pd.to_datetime(date)
-    date = date_pd.strftime('%Y-%m-%d')
-
-    # Ensure the running window length is an odd number (has to be odd for the given day to sit in the exact middle of the window)
-    if window_length % 2 == 0:
-        logger.error('Window length must be an odd numer.')
-        return
-
-    # Cut running window in half to center it around selected date
-    half_window = (window_length - 1) / 2
-    logger.info(f'Half window size: {half_window}')
-
-    # Select bounds of the running window
-    start_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).month
-    start_day = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).day
-    stop_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = half_window)).month
-    stop_day = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = half_window)).day
-
-    # Slice data to running window
-    window = data.sel(time = (data.time.dt.month == start_month) & (data.time.dt.day >= start_day) | (data.time.dt.month == stop_month) & (data.time.dt.day <= stop_day))
-    logger.info(window)
-    logger.info(f'Data sliced to {window_length} day running window for {date}.')
-
-    return window
 
 def best_fit(var, ds):
     """
