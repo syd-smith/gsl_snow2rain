@@ -4,7 +4,6 @@ Date Created: September 29, 2026
 """
 
 from datetime import datetime
-import gc
 import glob
 from loguru import logger
 import numpy as np
@@ -20,7 +19,8 @@ import xarray as xr
 # ==================================
 
 current_dir = Path(__file__).resolve().parent
-sys.path.append(str(current_dir))
+sys.path.append(str(current_dir.parent.parent))
+from from_savanna.solar_radiation_bounds import calculate_daily_solar_radiation
 
 # ===================
 # - Set Up Logger - 
@@ -419,9 +419,9 @@ def vect_app_fut(obs, hist, mod, var, date):
         # Apply future offset to observational values 
         mod_bias_corrected = obs_vals + fut_offset
 
-    elif os.environ.get("bias_type") == 'multipicative':
+    elif os.environ.get("bias_type") == 'multipicative': # Should only be used for precipitation and specific humidity
         # Calculate the future offset (ratio between historical and future period)
-        fut_offset = dry_day_adjustment(hist_vals, mod_date[var].values, var, dd_thresh)
+        fut_offset = dry_day_adjustment(hist_vals, mod_date[var].values, var)
 
         # Apply future offset to observational values 
         mod_bias_corrected = obs_vals * fut_offset
@@ -461,7 +461,7 @@ def ECDFM(obs, hist, mod, var, period = 'future'):
 
         # Debias data for given day of year
         if period == 'historical':
-            debiased_doy = vect_app_hist(obs, hist, mod, var, date)
+            debiased_doy = vect_app_hist(obs, hist, var, date)
         elif period == 'future':
             debiased_doy = vect_app_fut(obs, hist, mod, var, date)
         else:
@@ -472,6 +472,34 @@ def ECDFM(obs, hist, mod, var, period = 'future'):
         if debiased_doy is None:
             logger.error(f'Error detected in dataset. See log above for more information.')
             return None
+
+        # Check that variable bounds are within a physically reasonable limit
+        if var == 'pr':
+            # Replace negative precipitation values with zeros
+            pr_cond = (debiased_doy < 0)
+            debiased_doy = debiased_doy.where(~pr_cond, 0) # Use ~ to filter for where condition is met
+
+        elif var == 'sph':
+            # Bound lower limit of specific humidity to zero
+            min_cond = (debiased_doy < 0)
+            debiased_doy = debiased_doy.where(~min_cond, 0)
+
+            # Bound upper limit of specific humidity to 1 kg kg-1 or 100% pure water
+            max_cond = (debiased_doy > 1.0)
+            debiased_doy = debiased_doy.where(~max_cond, 1.0)
+
+        elif var == 'srad':
+            # Pull lat and lon values from model data
+            lat_vals = mod.isel(time = 0)['lat'].values
+            lon_vals = mod.isel(time = 0)['lon'].values
+
+            # Calculate min and max solar radiation values
+            min_vals = calculate_daily_solar_radiation(lat_vals, lon_vals, date, cloud_cover_fraction = 1)
+            max_vals = calculate_daily_solar_radiation(lat_vals, lon_vals, date)
+            # TODO: convert date to an int value
+            # TODO: broadcast array to len of mod's time dim
+            # lon_vals = np.broadcast_to(lons, (len(time_vals), *lons.shape))
+            #TODO: mask for min and max values
 
         # Pull month and day from date
         day = int(date.strftime('%d'))
@@ -533,7 +561,7 @@ def main(var, data_location, save = True):
     # Intermediate save for future data
     if save:
         # Create output directory to store new cleaned files
-        output_dir = current_dir / 'wrfout_no_dt'
+        output_dir = current_dir / 'wrfout_maca'
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
@@ -551,7 +579,7 @@ def main(var, data_location, save = True):
 
     if save:
         # Create output directory to store new cleaned files
-        output_dir = current_dir / 'wrfout_no_dt'
+        output_dir = current_dir / 'wrfout_maca'
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data

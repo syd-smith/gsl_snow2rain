@@ -16,6 +16,9 @@ module load miniforge3
 source /uufs/chpc.utah.edu/sys/installdir/r8/miniforge3/25.11.0/etc/profile.d/conda.sh
 conda activate olympics
 
+# Set variable based on gridMET variable save names
+# tmmn, tmmx, pr, sph, srad, wind (vas & uas)
+
 # Define variables
 export variable="pr"
 export domain="03"
@@ -23,8 +26,8 @@ export WRF_in="/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_m
 export MET_in="/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridmet/"
 export save=True
 export bias_type="multiplicative" # Options are "multiplicative" and "additive" but only pr and sph are "multipicative"
-export running_window=31
-export dry_day_threshold=0.01 # TODO: check units for precipitation and log sph ddt somewhere
+export running_window=31 # 15 days on either side of the date in question (matches MACA's 15 day semi window)
+export dry_day_threshold=0.254 # PR: 0.254 mm & SPH:6.6e-5 kg kg-1
 
 # Point to python bin in olympics
 PYTHON_BIN="/uufs/chpc.utah.edu/common/home/strong-group7/sydney/miniforge3_envs/olympics/bin/python"
@@ -39,7 +42,7 @@ cdo cat daily/${var}/*.nc wrfout/wrf_raw_GSLBIP_multimodel_ssp245_${var}_cdo.nc
 echo "Concatenation complete!"
 
 # Call python file
-# ${PYTHON_BIN} ecdfm_man.py 
+${PYTHON_BIN} ecdfm_man.py 
 
 
 

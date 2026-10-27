@@ -3,6 +3,7 @@ Author: Sydney Smith
 Date Created: October 26, 2026
 """
 
+from contextlib import contextmanager
 from datetime import datetime
 import glob
 from loguru import logger
@@ -428,7 +429,7 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
 
 # Catch silent errors and report to log file
 @logger.catch 
-def main(variable, domain, WRF_in, MET_in, debias = True):
+def main(variable, domain, WRF_in, MET_in):
     # State what variable is being used
     logger.info(f'Debiasing for {variable}.')
 
@@ -511,9 +512,6 @@ def main(variable, domain, WRF_in, MET_in, debias = True):
 # ======================
 # ---- Entry Point ----
 # ======================
-
-# Set variable based on gridMET variable save names
-# tmmn, tmmx, pr, sph, srad, wind (vas & uas)
 
 if __name__ == '__main__':
     # Track program time in log files
