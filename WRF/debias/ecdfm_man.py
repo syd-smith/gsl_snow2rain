@@ -22,8 +22,6 @@ import xarray as xr
 current_dir = Path(__file__).resolve().parent
 sys.path.append(str(current_dir))
 
-from plots.validation import running_window_slice, loc_sel
-
 # ===================
 # - Set Up Logger - 
 # ==================
@@ -232,7 +230,7 @@ def loc_sel(ds, var, lat, lon):
 
     return point_data
 
-def running_window_slice(data, date, window_length = 31):
+def running_window_slice(data, date, window_length = float(os.environ.get("running_window"))):
     """"
     Select only data within the window length (measured in number of days and centered around
     date given) across the entire dataset.
@@ -286,11 +284,92 @@ def doy_mask(ds, date):
 
     return masked
 
-def vect_app(obs, hist, mod, var, date, period = 'future'):
+def vect_app_hist(obs, hist, var, date):
     """
     Debias model data for a given date as a vectorized process. 3D array should be organized as
     (time, lat, lon) where debiasing is performed along the time axis. All data inputs should 
-    first be detrended before being passed to this function.
+    first be detrended before being passed to this function. For debiasing the historical period 
+    (that corresponds with obs) only.
+    """
+    # Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
+    obs_sliced = running_window_slice(obs, date)
+    logger.info(f'NaNs in obs running window: {float(obs_sliced[var].isnull().sum().values)}')
+
+    hist_sliced = running_window_slice(hist, date)
+    logger.info(f'NaNs in hist running window: {float(hist_sliced[var].isnull().sum().values)}')
+
+    # End function if NaNs are present in the source data
+    if obs_sliced[var].isnull().any() or hist_sliced[var].isnull().any():
+        logger.error('NaNs detected in source data.')
+        return NotImplementedError
+
+    # Create CDFs from sliced datasets
+    obs_cdf = vectorized_ECDF(obs_sliced[var].values)
+    hist_cdf = vectorized_ECDF(hist_sliced[var].values)
+
+    # Mask dataset to given date
+    hist_date = doy_mask(hist, date) # This should select day of interest across all years in ds
+    logger.info(f'Dataset sliced down to date of interest: {date}')
+    logger.info(hist_date)
+
+    # Use mod_cdf like a function to find all of the percentiles in mod_date
+    hist_percentiles = hist_cdf(hist_date[var].values)
+    logger.info(f'Percentile values for model data: {hist_percentiles}')
+    logger.info(f'NaNs in hist_percentiles: {float(np.isnan(hist_percentiles).sum())}')
+
+    # Perform bias adjustment
+    # Find data points for every percentile in mod_percentiles
+    mod_bias_corrected = obs_cdf.inverse(hist_percentiles)
+
+    # End script early if there are Nans in data
+    if np.isnan(mod_bias_corrected).any():
+        logger.error(f'NaNs in debiased data: {float(np.isnan(mod_bias_corrected).sum())}')
+        logger.info(f'Nan error occured on {date}.')
+        return None
+
+    logger.info('Mod data successfully bias corrected!')
+    logger.info(mod_bias_corrected)
+    logger.info(f'Bias corrected max: {mod_bias_corrected.max()}')
+    logger.info(f'Bias corrected min: {mod_bias_corrected.min()}')
+
+    return mod_bias_corrected
+
+def dry_day_adjustment(hist, fut, dd_thresh = float(os.environ.get("dry_day_threshold"))):
+    """
+    Handle edge cases for multipicative bias variables under the dry day threshold. Wet is defined as
+    being above the dry day threshold and dry is defined as being below the threshold.
+    """
+
+    # Create placeholder array for future offset values
+    fut_offset = xr.DataArray(np.nan, coords = fut.coords, dims = fut.dims)
+
+    # Handling if both historical and future are dry -> set offset ratio to 1 (no change)
+    dry_cond = (hist <= dd_thresh) & (fut <= dd_thresh)
+    fut_offset = fut_offset.where(~dry_cond, 1.0) # use ~ to search for values that meet the given condition
+
+    # Handling if histroical is dry and future is wet -> use dd_thresh in denomenator to avoid divide by zero errors
+    dry_wet_cond = (hist <= dd_thresh) & (fut > dd_thresh)
+    fut_offset = fut_offset.where(~dry_wet_cond, fut/dd_thresh)
+
+    # Handling if both historical and future are wet -> expected case (fut/hist)
+    wet_cond = (hist > dd_thresh) & (fut > dd_thresh)
+    fut_offset = fut_offset.where(~wet_cond, fut/hist)
+
+    # Handling if historical is wet and future is dry -> use dd_thresh in numerator to avoid setting precip to zero
+    wet_dry_cond = (hist > dd_thresh) & (fut <= dd_thresh)
+    fut_offset = fut_offset.where(~wet_dry_cond, dd_thresh/hist)
+
+    # Bound offset ratios to be no greater than 5.0
+    fut_offset_bounded = fut_offset.where(~(fut_offset > 5), 5.0)
+
+    return fut_offset_bounded
+
+def vect_app_fut(obs, hist, mod, var, date):
+    """
+    Debias model data for a given date as a vectorized process. 3D array should be organized as
+    (time, lat, lon) where debiasing is performed along the time axis. All data inputs should 
+    first be detrended before being passed to this function. Assumes all model inputs are 
+    independent of the historical period.
     """
     # Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
     obs_sliced = running_window_slice(obs, date)
@@ -308,56 +387,44 @@ def vect_app(obs, hist, mod, var, date, period = 'future'):
         logger.error('NaNs detected in source data.')
         return NotImplementedError
 
-    if period == 'historical':
-        # Create CDFs from sliced datasets
-        obs_cdf = vectorized_ECDF(obs_sliced[var].values)
-        hist_cdf = vectorized_ECDF(hist_sliced[var].values)
-
-        # Mask dataset to given date
-        hist_date = doy_mask(hist, date) # This should select day of interest across all years in ds
-        logger.info(f'Dataset sliced down to date of interest: {date}')
-        logger.info(hist_date)
+    # Create CDFs from sliced datasets
+    obs_cdf = vectorized_ECDF(obs_sliced[var].values)
+    hist_cdf = vectorized_ECDF(hist_sliced[var].values)
+    mod_cdf = vectorized_ECDF(mod_sliced[var].values)
     
-        # Use mod_cdf like a function to find all of the percentiles in mod_date
-        hist_percentiles = hist_cdf(hist_date[var].values)
-        logger.info(f'Percentile values for model data: {hist_percentiles}')
-        logger.info(f'NaNs in hist_percentiles: {float(np.isnan(hist_percentiles).sum())}')
+    # Mask original dataset to given date
+    mod_date = doy_mask(mod, date) # This should select day of interest across all years in ds
+    logger.info(f'Dataset sliced down to date of interest: {date}')
+    logger.info(mod_date)
 
-        # Perform bias adjustment
-        # Find data points for every percentile in mod_percentiles
-        mod_bias_corrected = obs_cdf.inverse(hist_percentiles)
+    # Use mod_cdf like a function to find all of the percentiles in for data points in mod_date
+    mod_percentiles = mod_cdf(mod_date[var].values)
+    logger.info(f'Percentile values for mod data: {mod_percentiles}')
+    logger.info(f'NaNs in mod_percentiles: {float(np.isnan(mod_percentiles).sum())}')
 
-    # Assumes everyhting else is debiasing data independent of the historical period
-    else:
+    # Find observational data points for every percentile in mod_percentiles
+    obs_vals = obs_cdf.inverse(mod_percentiles)
+    logger.info(f'NaNs in obs_vals: {float(np.isnan(obs_vals).sum())}')
+    logger.info(f'Obs values for given percentiles: {obs_vals}')
 
-        # Create CDFs from sliced datasets
-        obs_cdf = vectorized_ECDF(obs_sliced[var].values)
-        hist_cdf = vectorized_ECDF(hist_sliced[var].values)
-        mod_cdf = vectorized_ECDF(mod_sliced[var].values)
-        
-        # Mask dataset to given date
-        mod_date = doy_mask(mod, date) # This should select day of interest across all years in ds
-        logger.info(f'Dataset sliced down to date of interest: {date}')
-        logger.info(mod_date)
+    # Find observational data points for every percentile in mod_percentiles
+    hist_vals = hist_cdf.inverse(mod_percentiles)
+    logger.info(f'NaNs in hist_vals: {float(np.isnan(hist_vals).sum())}')
+    logger.info(f'Historical values for given percentiles: {hist_vals}')
 
-        # Use mod_cdf like a function to find all of the percentiles in mod_date
-        mod_percentiles = mod_cdf(mod_date[var].values)
-        logger.info(f'Percentile values for mod data: {mod_percentiles}')
-        logger.info(f'NaNs in mod_percentiles: {float(np.isnan(mod_percentiles).sum())}')
+    if os.environ.get("bias_type") == 'additive':
+        # Calculate the future offset (difference between historical and future period)
+        fut_offset = mod_date[var].values - hist_vals
 
-        # Find data points for every percentile in mod_percentiles
-        obs_vals = obs_cdf.inverse(mod_percentiles)
-        logger.info(f'NaNs in obs_vals: {float(np.isnan(obs_vals).sum())}')
-        logger.info(f'Obs values for given percentiles: {obs_vals}')
+        # Apply future offset to observational values 
+        mod_bias_corrected = obs_vals + fut_offset
 
-        hist_vals = hist_cdf.inverse(mod_percentiles)
-        logger.info(f'NaNs in hist_vals: {float(np.isnan(hist_vals).sum())}')
-        logger.info(f'Historical values for given percentiles: {hist_vals}')
+    elif os.environ.get("bias_type") == 'multipicative':
+        # Calculate the future offset (ratio between historical and future period)
+        fut_offset = dry_day_adjustment(hist_vals, mod_date[var].values, var, dd_thresh)
 
-        # Perform bias adjustment
-        bias = hist_vals - obs_vals
-        logger.info(f'NaNs in bias: {float(np.isnan(bias).sum())}')
-        mod_bias_corrected = mod_date[var].values - bias
+        # Apply future offset to observational values 
+        mod_bias_corrected = obs_vals * fut_offset
 
     # End script early if there are Nans in data
     if np.isnan(mod_bias_corrected).any():
@@ -372,7 +439,7 @@ def vect_app(obs, hist, mod, var, date, period = 'future'):
 
     return mod_bias_corrected
 
-def ECDFM(obs, hist, mod, var, lat = 40.788, lon = -111.978, period = future):
+def ECDFM(obs, hist, mod, var, period = 'future'):
     """
     Performs ECDFM quantile mapping debiasing process on given data based on data from a given histroical
     period and corresponding observational data. Model data should include both historical and future data. 
@@ -393,7 +460,13 @@ def ECDFM(obs, hist, mod, var, lat = 40.788, lon = -111.978, period = future):
         logger.info(f'Date type: {type(date)}')
 
         # Debias data for given day of year
-        debiased_doy = vect_app(obs, hist, mod, var, date, period = period)
+        if period == 'historical':
+            debiased_doy = vect_app_hist(obs, hist, mod, var, date)
+        elif period == 'future':
+            debiased_doy = vect_app_fut(obs, hist, mod, var, date)
+        else:
+            debiased_doy = None
+            logger.error('Invaild period selected. Please select either historical or future.')
 
         # Exit out of function if Nans occur
         if debiased_doy is None:
@@ -454,12 +527,8 @@ def main(var, data_location, save = True):
     hist = mod.sel(time = slice('1985-01-01', '2014-12-31'))
     fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
 
-    # Set location of interest as SLC airport
-    lat = 40.788
-    lon = -111.978
-    
     # Pass datasets to debiaser 
-    debiased_fut = ECDFM(obs, hist, fut, var, lat, lon, period = 'future')
+    debiased_fut = ECDFM(obs, hist, fut, var, period = 'future')
 
     # Intermediate save for future data
     if save:
@@ -478,7 +547,7 @@ def main(var, data_location, save = True):
     debiased_fut.close()
 
     # Pass datasets to debiaser 
-    debiased_hist = ECDFM(obs, hist, hist, var, lat, lon, period = 'historical')
+    debiased_hist = ECDFM(obs, hist, hist, var, period = 'historical')
 
     if save:
         # Create output directory to store new cleaned files
@@ -499,13 +568,13 @@ if __name__ == '__main__':
 
     # Track program time in log files
     start = time.perf_counter()
-    logger.info('Beginning execution.')
+    logger.info(f'Beginning execution of ecdfm debiasing for {os.environ.get("variable")}.')
 
     # Only inputs required
     main(
-            var = 'tmmx',
+            var = os.environ.get("variable"),
             data_location = current_dir,
-            save = True
+            save = os.environ.get("save")
             )
 
     # Report of runtime at completion 
