@@ -282,6 +282,8 @@ def running_year_window(data, date, year_window):
     # Select bounds of the running window
     start_dt = (data.sel(time = date, method = 'nearest')['time'].values + pd.DateOffset(years = -half_window))
     stop_dt = (data.sel(time = date, method = 'nearest')['time'].values + pd.DateOffset(years = half_window))
+    logger.info(f'Start year: {start_dt.year}')
+    logger.info(f'Stop year: {stop_dt.year}')
 
     # Slice data to running window
     window = data.sel(time = (data.time.dt.year >= start_dt.year) & (data.time.dt.year <= stop_dt.year))
@@ -341,7 +343,7 @@ def vect_app_hist(obs, hist, var, date, day_window):
     logger.info(f'Dataset sliced down to date of interest: {date}')
     logger.info(hist_date)
 
-    # Use mod_cdf like a function to find all of the percentiles in mod_date
+    # Use hist_cdf like a function to find all of the percentiles in fut_date
     hist_percentiles = hist_cdf(hist_date[var].values)
     logger.info(f'Percentile values for model data: {hist_percentiles}')
     logger.info(f'NaNs in hist_percentiles: {float(np.isnan(hist_percentiles).sum())}')
@@ -400,17 +402,20 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, year_window, bias_type, 
     first be detrended before being passed to this function. Assumes all model inputs are 
     independent of the historical period.
     """
+    # Separate out future data
+    fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
+
     # Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
-    obs_sliced = running_window_slice(obs, date, day_window)
-    obs_sliced = running_year_window(obs_sliced, date, year_window)
+    obs_sliced = running_year_window(obs, date, year_window)
+    obs_sliced = running_window_slice(obs_sliced, date, day_window)
     logger.info(f'NaNs in obs running window: {float(obs_sliced[var].isnull().sum().values)}')
 
-    hist_sliced = running_window_slice(hist, date, day_window)
-    hist_sliced = running_year_window(hist_sliced, date, year_window)
+    hist_sliced = running_year_window(hist, date, year_window)
+    hist_sliced = running_window_slice(hist_sliced, date, day_window)
     logger.info(f'NaNs in hist running window: {float(hist_sliced[var].isnull().sum().values)}')
 
-    mod_sliced = running_window_slice(mod, date, day_window)
-    mod_sliced = running_year_window(mod_sliced, date, year_window)
+    mod_sliced = running_year_window(mod, date, year_window)
+    mod_sliced = running_window_slice(mod_sliced, date, day_window)
     logger.info(f'NaNs in mod running window: {float(mod_sliced[var].isnull().sum().values)}')
     logger.info('Datasets sliced into running windows.')
 
@@ -425,12 +430,12 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, year_window, bias_type, 
     mod_cdf = vectorized_ECDF(mod_sliced[var].values)
     
     # Mask original dataset to given date
-    mod_date = doy_mask(mod, date) # This should select day of interest across all years in ds
+    fut_date = doy_mask(fut, date) # This should select day of interest across all years in ds
     logger.info(f'Dataset sliced down to date of interest: {date}')
-    logger.info(mod_date)
+    logger.info(fut_date)
 
-    # Use mod_cdf like a function to find all of the percentiles in for data points in mod_date
-    mod_percentiles = mod_cdf(mod_date[var].values)
+    # Use mod_cdf like a function to find all of the percentiles in for data points in fut_date
+    mod_percentiles = mod_cdf(fut_date[var].values)
     logger.info(f'Percentile values for mod data: {mod_percentiles}')
     logger.info(f'NaNs in mod_percentiles: {float(np.isnan(mod_percentiles).sum())}')
 
@@ -446,14 +451,14 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, year_window, bias_type, 
 
     if bias_type == 'additive':
         # Calculate the future offset (difference between historical and future period)
-        fut_offset = mod_date[var].values - hist_vals
+        fut_offset = fut_date[var].values - hist_vals
 
         # Apply future offset to observational values 
         mod_bias_corrected = obs_vals + fut_offset
 
     elif bias_type == 'multipicative': # Should only be used for precipitation and specific humidity
         # Calculate the future offset (ratio between historical and future period)
-        fut_offset = dry_day_adjustment(hist_vals, mod_date[var].values, dry_day_threshold)
+        fut_offset = dry_day_adjustment(hist_vals, fut_date[var].values, dry_day_threshold)
 
         # Apply future offset to observational values 
         mod_bias_corrected = obs_vals * fut_offset
@@ -475,7 +480,7 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, year_window, bias_type, 
 
     return mod_bias_corrected
 
-def ECDFM(obs, hist, mod, var, period = 'future', **kwargs):
+def ECDFM(obs, mod, var, period = 'future', **kwargs):
     """
     Performs ECDFM quantile mapping debiasing process on given data based on data from a given histroical
     period and corresponding observational data. Model data should include both historical and future data. 
@@ -484,12 +489,24 @@ def ECDFM(obs, hist, mod, var, period = 'future', **kwargs):
     # Make copy of mod_loc to plug debiased data into
     template = mod.copy(deep = True)
 
-    # Select first and last day in dataset
-    first_date = pd.to_datetime(mod.isel(time = 0).time.values)
-    last_date = pd.to_datetime(mod.isel(time = -1).time.values)
+    # Separate into historical and future periods
+    hist = mod.sel(time = slice('1985-01-01', '2014-12-31'))
+    fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
 
-    # Create date range that spans a calendar year (select a year that is a leap year)
-    dates = pd.date_range(start = first_date.strftime('%Y-%m-%d'), end = last_date.strftime('%Y-%m-%d'), freq = 'D') 
+    # Select first and last day in dataset
+    first_date = pd.to_datetime(fut.isel(time = 0).time.values)
+    last_date = pd.to_datetime(fut.isel(time = -1).time.values)
+
+    if period == 'historical':
+        # Create date range that spans a calendar year (select a year that is a leap year)
+        dates = pd.date_range(start = f"1988-{first_date.strftime('%m-%d')}", end = f"1988{last_date.strftime('%Y-%m-%d')}", freq = 'D') 
+
+    elif period == 'future':
+        dates = pd.date_range(start = first_date.strftime('%Y-%m-%d'), end = last_date.strftime('%Y-%m-%d'), freq = 'D') 
+    
+    else:
+        logger.error('Invaild period selected. Please select either historical or future.')
+        return None
 
     for date in dates:
         # Apply bias correction for single date
@@ -508,10 +525,6 @@ def ECDFM(obs, hist, mod, var, period = 'future', **kwargs):
 
             # Start debiasing future data
             debiased_doy = vect_app_fut(obs, hist, mod, var, date, day_window, year_window, bias_type, dry_day_threshold)
-
-        else:
-            debiased_doy = None
-            logger.error('Invaild period selected. Please select either historical or future.')
 
         # Exit out of function if Nans occur
         if debiased_doy is None:
@@ -560,9 +573,10 @@ def ECDFM(obs, hist, mod, var, period = 'future', **kwargs):
         # Pull month and day from date
         day = int(date.strftime('%d'))
         month = int(date.strftime('%m'))
+        year = int(date.strftime('%Y'))
 
         # Plug in debiased data
-        mask = (template.time.dt.month == month) & (template.time.dt.day == day)
+        mask = (template.time.dt.month == month) & (template.time.dt.day == day) & (template.time.dt.year >= year) & (template.time.dt.year <= year)
         template[var].data[mask] = debiased_doy 
         logger.info(f'Debiased data for {date} added to dataset!')
 
@@ -619,10 +633,6 @@ if __name__ == '__main__':
     mod_path = glob.glob(str(current_dir / 'daily' / f'*{var}*.nc'))
     mod = xr.open_dataset(mod_path[0], decode_times = True)
 
-    # Slice model data down to historical and future period respectively
-    hist = mod.sel(time = slice('1985-01-01', '2014-12-31'))
-    fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
-
     fut_config = {
         'day_window' : int(os.environ.get("day_running_window")),
         'year_window' : int(os.environ.get("year_running_window")),
@@ -631,7 +641,7 @@ if __name__ == '__main__':
     }
 
     # Pass datasets to debiaser 
-    debiased_fut = ECDFM(obs, hist, fut, var, period = 'future', **fut_config)
+    debiased_fut = ECDFM(obs, mod, var, period = 'future', **fut_config)
 
     # Intermediate save for future data
     if save:
@@ -650,7 +660,7 @@ if __name__ == '__main__':
     debiased_fut.close()
 
     # Pass datasets to debiaser 
-    debiased_hist = ECDFM(obs, hist, hist, var, period = 'historical')
+    debiased_hist = ECDFM(obs, mod, var, period = 'historical')
 
     if save:
         # Create output directory to store new cleaned files
