@@ -1,4 +1,3 @@
-#%%
 """
 Author: Sydney Smith
 Date Created: August 25, 2026
@@ -289,7 +288,7 @@ def cdf_plt(var, obs, mod, db_hist, db_fut, dates, lat, lon, save_name, save = T
         obs_window = running_window_slice(obs_sel, date, window_size)
         mod_window = running_window_slice(mod_sel, date, window_size)
         db_hist_window = running_window_slice(db_hist_sel, date, window_size)
-        db_fut_window = running_window_slice(db_fut_sel, date, window_size)
+        db_fut_window = running_window_slice(db_fut_sel.copy(deep = True), date, window_size)
 
         # Slice into historical and future periods
         hist_window = mod_window.sel(time = mod_window.time.dt.year.isin(range(1985, 2015)))
@@ -891,16 +890,20 @@ def main(var, wrf_output_location, elevation = False):
     debiased_fut_path = glob.glob(str(parent_dir / 'wrfout_sep' / 'debiased_fut_tmmx.nc'))
     debiased_fut = xr.open_dataset(debiased_fut_path[0], decode_times = True)
 
-    # Set location of interest as SLC airport
-    lat = 40.788
-    lon = -111.978
+    # Location of interest as SLC airport
+    # lat = 40.788
+    # lon = -111.978
+
+    # Location of interest at Alta
+    lat = 40.58083
+    lon = -111.63722
 
     # Test Plots
     # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True) 
     # trend = trend_plt(var, obs, mod, dt_obs, dt_mod, '1985-03-05', lat, lon, save = True)
 
     # CDF plots for SLC Airport
-    cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['1985-01-15', '1985-04-15', '1985-07-15', '1985-10-15'], lat = lat, lon = lon, save_name = f'cdf_slc_airport_{var}_sep',save = True) 
+    cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['1985-01-15', '1985-04-15', '1985-07-15', '1985-10-15'], lat = lat, lon = lon, save_name = f'cdf_alta_{var}',save = True) 
     
     # seasonal = seasonal_bias(var, raw, debiased, save = False)
     # bias_map = min_n_max_bias(var, raw, debiased, save = True) # OOM kill (chunking didn't work might need to try mannual chunking)
@@ -928,10 +931,3 @@ if __name__ == '__main__':
 
 
 
-
-
-
-
-
-
-# %%

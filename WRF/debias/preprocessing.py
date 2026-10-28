@@ -392,6 +392,9 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
 
     # Convert date to a pandas datetime object
     time_dt = pd.to_datetime(today)
+
+    # Keep lat and lon dims as 2d for regridding process
+    dims_2d = ('south_north', 'west_east')
     
     # Save daily data to a new dataset
     daily_ds = xr.Dataset(
@@ -529,7 +532,14 @@ if __name__ == '__main__':
 
     # Report of runtime at completion 
     logger.success(f'Debiasing process completed!')
-    logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
+    elapsed = time.perf_counter() - start
+
+    if elapsed < 60: 
+        logger.info(f'Total runtime: {elapsed:.4f} sec')
+    elif elapsed < 3600:
+        logger.info(f'Total runtime: {elapsed / 60:.2f} min')
+    else:
+        logger.info(f'Total runtime: {elapsed / 3600:.2f} hr')
 
     # Force script to stop running once code is finished
     sys.exit(0)

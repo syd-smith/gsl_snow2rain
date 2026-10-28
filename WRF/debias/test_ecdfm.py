@@ -13,6 +13,9 @@ import pytest
 import sys
 import xarray as xr
 
+os.environ["running_window"] = '31'
+os.environ["dry_day_threshold"] = '0.254'
+
 # ==================================
 # - Establish Relative File Path - 
 # ==================================
@@ -233,10 +236,10 @@ def test_running_window():
     ds = ds_dummy()
 
     # Set date of interest
-    date = '1985-03-05'
+    date = '1985-01-05'
 
     # Call dummy dataset with constrained date range and no trend
-    ds_sliced_ctrl = ds_dummy(start_day = '1985-02-18', stop_day = '1985-03-20')
+    ds_sliced_ctrl = ds_dummy(start_day = '1984-12-21', stop_day = '1985-01-20')
 
     # Slice data using running_window_slice
     ds_sliced_test = running_window_slice(ds, date)
@@ -586,3 +589,4 @@ def fut_hist_isolated(var, vectorized = True, save = True):
 fut_hist_isolated('tmmx')
 
 # debias_hist_only('tmmx', current_dir)
+# %%

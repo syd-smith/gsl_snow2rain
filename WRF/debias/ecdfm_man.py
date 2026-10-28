@@ -230,7 +230,7 @@ def loc_sel(ds, var, lat, lon):
 
     return point_data
 
-def running_window_slice(data, date, window_length = float(os.environ.get("running_window"))):
+def running_window_slice(data, date, day_window = 31):
     """"
     Select only data within the window length (measured in number of days and centered around
     date given) across the entire dataset.
@@ -240,13 +240,13 @@ def running_window_slice(data, date, window_length = float(os.environ.get("runni
     date = date_pd.strftime('%Y-%m-%d')
 
     # Ensure the running window length is an odd number (has to be odd for the given day to sit in the exact middle of the window)
-    if window_length % 2 == 0:
+    if day_window % 2 == 0:
         logger.error('Window length must be an odd numer.')
         return
 
     # Cut running window in half to center it around selected date
-    half_window = (window_length - 1) / 2
-    logger.info(f'Half window size: {half_window}')
+    half_window = (day_window - 1) / 2
+    logger.info(f'Half day window size: {half_window}')
 
     # Select bounds of the running window
     start_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).month
@@ -257,7 +257,36 @@ def running_window_slice(data, date, window_length = float(os.environ.get("runni
     # Slice data to running window
     window = data.sel(time = (data.time.dt.month == start_month) & (data.time.dt.day >= start_day) | (data.time.dt.month == stop_month) & (data.time.dt.day <= stop_day))
     logger.info(window)
-    logger.info(f'Data sliced to {window_length} day running window for {date}.')
+    logger.info(f'Data sliced to {day_window} day running window for {date}.')
+
+    return window
+
+def running_year_window(data, date, year_window):
+    """
+    Slice data down to years within a 31 year running window centered around the given date.
+    """
+
+    # Ensure date is a string in the proper format
+    date_pd = pd.to_datetime(date)
+    date = date_pd.strftime('%Y-%m-%d')
+
+    # Ensure the running window length is an odd number (has to be odd for the given day to sit in the exact middle of the window)
+    if year_window % 2 == 0:
+        logger.error('Window length must be an odd numer.')
+        return
+
+    # Cut running window in half to center it around selected date
+    half_window = (year_window - 1) / 2
+    logger.info(f'Half year window size: {half_window}')
+
+    # Select bounds of the running window
+    start_dt = (data.sel(time = date, method = 'nearest')['time'].values + pd.DateOffset(years = -half_window))
+    stop_dt = (data.sel(time = date, method = 'nearest')['time'].values + pd.DateOffset(years = half_window))
+
+    # Slice data to running window
+    window = data.sel(time = (data.time.dt.year >= start_dt.year) & (data.time.dt.year <= stop_dt.year))
+    logger.info(window)
+    logger.info(f'Data sliced to {year_window} year running window for {date}.')
 
     return window
 
@@ -284,7 +313,7 @@ def doy_mask(ds, date):
 
     return masked
 
-def vect_app_hist(obs, hist, var, date):
+def vect_app_hist(obs, hist, var, date, day_window):
     """
     Debias model data for a given date as a vectorized process. 3D array should be organized as
     (time, lat, lon) where debiasing is performed along the time axis. All data inputs should 
@@ -292,10 +321,10 @@ def vect_app_hist(obs, hist, var, date):
     (that corresponds with obs) only.
     """
     # Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
-    obs_sliced = running_window_slice(obs, date)
+    obs_sliced = running_window_slice(obs, date, day_window)
     logger.info(f'NaNs in obs running window: {float(obs_sliced[var].isnull().sum().values)}')
 
-    hist_sliced = running_window_slice(hist, date)
+    hist_sliced = running_window_slice(hist, date, day_window)
     logger.info(f'NaNs in hist running window: {float(hist_sliced[var].isnull().sum().values)}')
 
     # End function if NaNs are present in the source data
@@ -334,7 +363,7 @@ def vect_app_hist(obs, hist, var, date):
 
     return mod_bias_corrected
 
-def dry_day_adjustment(hist, fut, dd_thresh = float(os.environ.get("dry_day_threshold"))):
+def dry_day_adjustment(hist, fut, dd_thresh):
     """
     Handle edge cases for multipicative bias variables under the dry day threshold. Wet is defined as
     being above the dry day threshold and dry is defined as being below the threshold.
@@ -364,7 +393,7 @@ def dry_day_adjustment(hist, fut, dd_thresh = float(os.environ.get("dry_day_thre
 
     return fut_offset_bounded
 
-def vect_app_fut(obs, hist, mod, var, date):
+def vect_app_fut(obs, hist, mod, var, date, day_window, year_window, bias_type, dry_day_threshold):
     """
     Debias model data for a given date as a vectorized process. 3D array should be organized as
     (time, lat, lon) where debiasing is performed along the time axis. All data inputs should 
@@ -372,13 +401,16 @@ def vect_app_fut(obs, hist, mod, var, date):
     independent of the historical period.
     """
     # Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
-    obs_sliced = running_window_slice(obs, date)
+    obs_sliced = running_window_slice(obs, date, day_window)
+    obs_sliced = running_year_window(obs_sliced, date, year_window)
     logger.info(f'NaNs in obs running window: {float(obs_sliced[var].isnull().sum().values)}')
 
-    hist_sliced = running_window_slice(hist, date)
+    hist_sliced = running_window_slice(hist, date, day_window)
+    hist_sliced = running_year_window(hist_sliced, date, year_window)
     logger.info(f'NaNs in hist running window: {float(hist_sliced[var].isnull().sum().values)}')
 
-    mod_sliced = running_window_slice(mod, date)
+    mod_sliced = running_window_slice(mod, date, day_window)
+    mod_sliced = running_year_window(mod_sliced, date, year_window)
     logger.info(f'NaNs in mod running window: {float(mod_sliced[var].isnull().sum().values)}')
     logger.info('Datasets sliced into running windows.')
 
@@ -412,19 +444,23 @@ def vect_app_fut(obs, hist, mod, var, date):
     logger.info(f'NaNs in hist_vals: {float(np.isnan(hist_vals).sum())}')
     logger.info(f'Historical values for given percentiles: {hist_vals}')
 
-    if os.environ.get("bias_type") == 'additive':
+    if bias_type == 'additive':
         # Calculate the future offset (difference between historical and future period)
         fut_offset = mod_date[var].values - hist_vals
 
         # Apply future offset to observational values 
         mod_bias_corrected = obs_vals + fut_offset
 
-    elif os.environ.get("bias_type") == 'multipicative': # Should only be used for precipitation and specific humidity
+    elif bias_type == 'multipicative': # Should only be used for precipitation and specific humidity
         # Calculate the future offset (ratio between historical and future period)
-        fut_offset = dry_day_adjustment(hist_vals, mod_date[var].values, var)
+        fut_offset = dry_day_adjustment(hist_vals, mod_date[var].values, dry_day_threshold)
 
         # Apply future offset to observational values 
         mod_bias_corrected = obs_vals * fut_offset
+
+    else:
+        logger.error('Incorrect bias_type selected. Please use "additive" or "multipicative".')
+        return None
 
     # End script early if there are Nans in data
     if np.isnan(mod_bias_corrected).any():
@@ -439,7 +475,7 @@ def vect_app_fut(obs, hist, mod, var, date):
 
     return mod_bias_corrected
 
-def ECDFM(obs, hist, mod, var, period = 'future'):
+def ECDFM(obs, hist, mod, var, period = 'future', **kwargs):
     """
     Performs ECDFM quantile mapping debiasing process on given data based on data from a given histroical
     period and corresponding observational data. Model data should include both historical and future data. 
@@ -453,7 +489,7 @@ def ECDFM(obs, hist, mod, var, period = 'future'):
     last_date = pd.to_datetime(mod.isel(time = -1).time.values)
 
     # Create date range that spans a calendar year (select a year that is a leap year)
-    dates = pd.date_range(start = f"1988-{first_date.strftime('%m-%d')}", end = f"1988-{last_date.strftime('%m-%d')}", freq = 'D') 
+    dates = pd.date_range(start = first_date.strftime('%Y-%m-%d'), end = last_date.strftime('%Y-%m-%d'), freq = 'D') 
 
     for date in dates:
         # Apply bias correction for single date
@@ -461,9 +497,18 @@ def ECDFM(obs, hist, mod, var, period = 'future'):
 
         # Debias data for given day of year
         if period == 'historical':
-            debiased_doy = vect_app_hist(obs, hist, var, date)
+            debiased_doy = vect_app_hist(obs, hist, var, date, day_window)
+
         elif period == 'future':
-            debiased_doy = vect_app_fut(obs, hist, mod, var, date)
+            # Unpack extra parameters
+            day_window = int(kwargs.get('day_window'))
+            year_window = int(kwargs.get('year_window'))
+            bias_type = kwargs.get('bias_type')
+            dry_day_threshold = float(kwargs.get('dry_day_threshold'))
+
+            # Start debiasing future data
+            debiased_doy = vect_app_fut(obs, hist, mod, var, date, day_window, year_window, bias_type, dry_day_threshold)
+
         else:
             debiased_doy = None
             logger.error('Invaild period selected. Please select either historical or future.')
@@ -496,10 +541,21 @@ def ECDFM(obs, hist, mod, var, period = 'future'):
             # Calculate min and max solar radiation values
             min_vals = calculate_daily_solar_radiation(lat_vals, lon_vals, date, cloud_cover_fraction = 1)
             max_vals = calculate_daily_solar_radiation(lat_vals, lon_vals, date)
-            # TODO: convert date to an int value
-            # TODO: broadcast array to len of mod's time dim
-            # lon_vals = np.broadcast_to(lons, (len(time_vals), *lons.shape))
-            #TODO: mask for min and max values
+
+            # Convert pd.to_datetime to int value
+            date = date.astype('int64')
+
+            # Broadcast 2D array of min and max values to a 3D array to match debiased_doy 
+            # Note: min and max values should be the same across the time dimension because DOY is the same while the year itself changes
+            time_len = len(debiased_doy[0])
+            min_expanded = np.broadcast_to(min_vals, (time_len, *min_vals.shape))
+            max_expanded = np.broadcast_to(max_vals, (time_len, *max_vals.shape))
+
+            # Mask debiased_doy for min and max values
+            min_cond = (debiased_doy > min_expanded)
+            debiased_doy = debiased_doy.where(~min_cond, min_expanded)
+            max_cond = (debiased_doy > max_expanded)
+            debiased_doy = debiased_doy.where(~max_cond, max_expanded)
 
         # Pull month and day from date
         day = int(date.strftime('%d'))
@@ -542,31 +598,50 @@ def ECDFM(obs, hist, mod, var, period = 'future'):
     return template
 
 # Catch silent errors and report to log file
-@logger.catch 
-def main(var, data_location, save = True):
+# @logger.catch 
+if __name__ == '__main__':
+
+    # Track program time in log files
+    start = time.perf_counter()
+    logger.info(f'Beginning execution of ecdfm debiasing for {os.environ.get("variable")}.')
+
+    # Pull inputs from slurm script
+    var = os.environ.get("variable")
+    domain = os.environ.get("domain")
+    WRF_in = os.environ.get("WRF_in")
+    MET_in = os.environ.get("MET_in")
+    save = os.environ.get("save")
+  
     # Open datasets
-    obs_path = glob.glob(str(data_location / 'gridMET' / f'*{var}*.nc'))
+    obs_path = glob.glob(str(current_dir / 'gridMET' / f'*{var}*.nc'))
     obs = xr.open_dataset(obs_path[0], decode_times = True)
 
-    mod_path = glob.glob(str(data_location / 'daily' / f'*{var}*.nc'))
+    mod_path = glob.glob(str(current_dir / 'daily' / f'*{var}*.nc'))
     mod = xr.open_dataset(mod_path[0], decode_times = True)
 
     # Slice model data down to historical and future period respectively
     hist = mod.sel(time = slice('1985-01-01', '2014-12-31'))
     fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
 
+    fut_config = {
+        'day_window' : int(os.environ.get("day_running_window")),
+        'year_window' : int(os.environ.get("year_running_window")),
+        'bias_type' : os.environ.get("bias_type"),
+        'dry_day_threshold' : float(os.environ.get("dry_day_threshold"))
+    }
+
     # Pass datasets to debiaser 
-    debiased_fut = ECDFM(obs, hist, fut, var, period = 'future')
+    debiased_fut = ECDFM(obs, hist, fut, var, period = 'future', **fut_config)
 
     # Intermediate save for future data
     if save:
         # Create output directory to store new cleaned files
-        output_dir = current_dir / 'wrfout_maca'
+        output_dir = current_dir / 'wrfout_31'
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
         debiased_fut_path = os.path.join(output_dir, f'debiased_fut_{var}.nc')
-  
+    
         # Save data to netCDF file
         debiased_fut.to_netcdf(debiased_fut_path)
         logger.success(f'Future files saved to: {output_dir}')
@@ -579,7 +654,7 @@ def main(var, data_location, save = True):
 
     if save:
         # Create output directory to store new cleaned files
-        output_dir = current_dir / 'wrfout_maca'
+        output_dir = current_dir / 'wrfout_31'
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
@@ -592,22 +667,16 @@ def main(var, data_location, save = True):
     # Close out of data
     debiased_hist.close()
 
-if __name__ == '__main__':
-
-    # Track program time in log files
-    start = time.perf_counter()
-    logger.info(f'Beginning execution of ecdfm debiasing for {os.environ.get("variable")}.')
-
-    # Only inputs required
-    main(
-            var = os.environ.get("variable"),
-            data_location = current_dir,
-            save = os.environ.get("save")
-            )
-
     # Report of runtime at completion 
     logger.success(f'Debiasing process completed!')
-    logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
+    elapsed = time.perf_counter() - start
+
+    if elapsed < 60: 
+        logger.info(f'Total runtime: {elapsed:.4f} sec')
+    elif elapsed < 3600:
+        logger.info(f'Total runtime: {elapsed / 60:.2f} min')
+    else:
+        logger.info(f'Total runtime: {elapsed / 3600:.2f} hr')
 
     # Force script to stop running once code is finished
     sys.exit(0)
