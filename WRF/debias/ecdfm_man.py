@@ -237,7 +237,7 @@ def running_window_slice(data, date, day_window = 31):
     """
     # Ensure date is a string in the proper format
     date_pd = pd.to_datetime(date)
-    date = date_pd.strftime('%Y-%m-%d')
+    target_doy = date_pd.dayofyear
 
     # Ensure the running window length is an odd number (has to be odd for the given day to sit in the exact middle of the window)
     if day_window % 2 == 0:
@@ -248,49 +248,65 @@ def running_window_slice(data, date, day_window = 31):
     half_window = (day_window - 1) / 2
     logger.info(f'Half day window size: {half_window}')
 
-    # Select bounds of the running window
-    start_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).month
-    start_day = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = -half_window)).day
-    stop_month = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = half_window)).month
-    stop_day = (data.sel(time = date, method = 'nearest')['time'].values + pd.Timedelta(days = half_window)).day
+    # Calculate start and end DOY
+    start_doy = target_doy - half_window
+    stop_doy = target_doy + half_window
 
-    # Slice data to running window
-    window = data.sel(time = (data.time.dt.month == start_month) & (data.time.dt.day >= start_day) | (data.time.dt.month == stop_month) & (data.time.dt.day <= stop_day))
+    # Pull out how many days there are in data's year
+    # target_year = date_pd.year
+    # year_data = data.sel(time = str(target_year))
+    # max_days = int(year_data.time.dt.dayofyear.max().values)
+
+    # DOY calendar counter starts at 1 so if below this then slicing needs to dip into december of the previous year
+    if start_doy < 1:
+        # Assumes a 365 day year for wrapping
+        alt_start = start_doy + 365
+        window = data.sel(time = (data.time.dt.dayofyear >= alt_start) | (data.time.dt.dayofyear <= stop_doy))
+
+    elif stop_doy > 365:
+        # Wraps around into January of the following year if it is over the max amount of days
+        alt_stop = stop_doy - 365
+        window = data.sel(time = (data.time.dt.dayofyear >= start_doy) | (data.time.dt.dayofyear <= alt_stop))
+
+    else:
+        # Normal window within the year
+        window = data.sel(time = (data.time.dt.dayofyear >= start_doy) & (data.time.dt.dayofyear <= stop_doy))
+
     logger.info(window)
     logger.info(f'Data sliced to {day_window} day running window for {date}.')
 
     return window
 
-def running_year_window(data, date, year_window):
-    """
-    Slice data down to years within a 31 year running window centered around the given date.
-    """
+# def running_year_window(data, date, year_window):
+#     """
+#     Slice data down to years within a 31 year running window centered around the given date.
+#     """
 
-    # Ensure date is a string in the proper format
-    date_pd = pd.to_datetime(date)
-    date = date_pd.strftime('%Y-%m-%d')
+#     # Ensure date is a string in the proper format
+#     date_pd = pd.to_datetime(date)
+#     date = date_pd.strftime('%Y-%m-%d')
 
-    # Ensure the running window length is an odd number (has to be odd for the given day to sit in the exact middle of the window)
-    if year_window % 2 == 0:
-        logger.error('Window length must be an odd numer.')
-        return
+#     # Ensure the running window length is an odd number (has to be odd for the given day to sit in the exact middle of the window)
+#     if year_window % 2 == 0:
+#         logger.error('Window length must be an odd numer.')
+#         return
 
-    # Cut running window in half to center it around selected date
-    half_window = (year_window - 1) / 2
-    logger.info(f'Half year window size: {half_window}')
+#     # Cut running window in half to center it around selected date
+#     half_window = (year_window - 1) / 2
+#     logger.info(f'Half year window size: {half_window}')
 
-    # Select bounds of the running window
-    start_dt = (data.sel(time = date, method = 'nearest')['time'].values + pd.DateOffset(years = -half_window))
-    stop_dt = (data.sel(time = date, method = 'nearest')['time'].values + pd.DateOffset(years = half_window))
-    logger.info(f'Start year: {start_dt.year}')
-    logger.info(f'Stop year: {stop_dt.year}')
+#     # Select bounds of the running window
+#     start_dt = (data.sel(time = date, method = 'nearest')['time'].values + pd.DateOffset(years = -half_window))
+#     stop_dt = (data.sel(time = date, method = 'nearest')['time'].values + pd.DateOffset(years = half_window))
+#     logger.info(f'Start year: {start_dt.year}')
+#     logger.info(f'Stop year: {stop_dt.year}')
 
-    # Slice data to running window
-    window = data.sel(time = (data.time.dt.year >= start_dt.year) & (data.time.dt.year <= stop_dt.year))
-    logger.info(window)
-    logger.info(f'Data sliced to {year_window} year running window for {date}.')
+#     # Slice data to running window
+#     window = data.sel(time = (data.time.dt.year >= start_dt.year) & (data.time.dt.year <= stop_dt.year))
+#     logger.info(window)
+#     logger.info(f'Data sliced to {year_window} year running window for {date}.')
 
-    return window
+#     return window
 
 def doy_mask(ds, date):
     """
@@ -376,22 +392,22 @@ def dry_day_adjustment(hist, fut, dd_thresh):
 
     # Handling if both historical and future are dry -> set offset ratio to 1 (no change)
     dry_cond = (hist <= dd_thresh) & (fut <= dd_thresh)
-    fut_offset = fut_offset.where(~dry_cond, 1.0) # use ~ to search for values that meet the given condition
+    fut_offset = fut_offset.where(np.logical_not(dry_cond), 1.0) # use np.logical_not to search for values that meet the given condition
 
     # Handling if histroical is dry and future is wet -> use dd_thresh in denomenator to avoid divide by zero errors
     dry_wet_cond = (hist <= dd_thresh) & (fut > dd_thresh)
-    fut_offset = fut_offset.where(~dry_wet_cond, fut/dd_thresh)
+    fut_offset = fut_offset.where(np.logical_not(dry_wet_cond), fut/dd_thresh)
 
     # Handling if both historical and future are wet -> expected case (fut/hist)
     wet_cond = (hist > dd_thresh) & (fut > dd_thresh)
-    fut_offset = fut_offset.where(~wet_cond, fut/hist)
+    fut_offset = fut_offset.where(np.logical_not(wet_cond), fut/hist)
 
     # Handling if historical is wet and future is dry -> use dd_thresh in numerator to avoid setting precip to zero
     wet_dry_cond = (hist > dd_thresh) & (fut <= dd_thresh)
-    fut_offset = fut_offset.where(~wet_dry_cond, dd_thresh/hist)
+    fut_offset = fut_offset.where(np.logical_not(wet_dry_cond), dd_thresh/hist)
 
     # Bound offset ratios to be no greater than 5.0
-    fut_offset_bounded = fut_offset.where(~(fut_offset > 5), 5.0)
+    fut_offset_bounded = fut_offset.where(np.logical_not(fut_offset > 5), 5.0)
 
     return fut_offset_bounded
 
@@ -403,19 +419,16 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, year_window, bias_type, 
     independent of the historical period.
     """
     # Separate out future data
-    fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
+    # fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
 
     # Slice data into 31 day running windows centered on given date (note: 31 days is defualt setting)
-    obs_sliced = running_year_window(obs, date, year_window)
-    obs_sliced = running_window_slice(obs_sliced, date, day_window)
+    obs_sliced = running_window_slice(obs, date, day_window)
     logger.info(f'NaNs in obs running window: {float(obs_sliced[var].isnull().sum().values)}')
 
-    hist_sliced = running_year_window(hist, date, year_window)
-    hist_sliced = running_window_slice(hist_sliced, date, day_window)
+    hist_sliced = running_window_slice(hist, date, day_window)
     logger.info(f'NaNs in hist running window: {float(hist_sliced[var].isnull().sum().values)}')
 
-    mod_sliced = running_year_window(mod, date, year_window)
-    mod_sliced = running_window_slice(mod_sliced, date, day_window)
+    mod_sliced = running_window_slice(mod, date, day_window)
     logger.info(f'NaNs in mod running window: {float(mod_sliced[var].isnull().sum().values)}')
     logger.info('Datasets sliced into running windows.')
 
@@ -430,7 +443,7 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, year_window, bias_type, 
     mod_cdf = vectorized_ECDF(mod_sliced[var].values)
     
     # Mask original dataset to given date
-    fut_date = doy_mask(fut, date) # This should select day of interest across all years in ds
+    fut_date = mod.sel(time = date) # This should select day of interest across all years in ds
     logger.info(f'Dataset sliced down to date of interest: {date}')
     logger.info(fut_date)
 
@@ -486,9 +499,6 @@ def ECDFM(obs, mod, var, period = 'future', **kwargs):
     period and corresponding observational data. Model data should include both historical and future data. 
     """
 
-    # Make copy of mod_loc to plug debiased data into
-    template = mod.copy(deep = True)
-
     # Separate into historical and future periods
     hist = mod.sel(time = slice('1985-01-01', '2014-12-31'))
     fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
@@ -501,8 +511,14 @@ def ECDFM(obs, mod, var, period = 'future', **kwargs):
         # Create date range that spans a calendar year (select a year that is a leap year)
         dates = pd.date_range(start = f"1988-{first_date.strftime('%m-%d')}", end = f"1988{last_date.strftime('%Y-%m-%d')}", freq = 'D') 
 
+        # Make copy of og data to plug debiased data into
+        template = hist.copy(deep = True)    
+
     elif period == 'future':
         dates = pd.date_range(start = first_date.strftime('%Y-%m-%d'), end = last_date.strftime('%Y-%m-%d'), freq = 'D') 
+
+        # Make copy of og data to plug debiased data into
+        template = mod.copy(deep = True)
     
     else:
         logger.error('Invaild period selected. Please select either historical or future.')
@@ -512,12 +528,20 @@ def ECDFM(obs, mod, var, period = 'future', **kwargs):
         # Apply bias correction for single date
         logger.info(f'Date type: {type(date)}')
 
+        # Pull month and day from date
+        day = int(date.strftime('%d'))
+        month = int(date.strftime('%m'))
+        year = int(date.strftime('%Y'))
+
         # Debias data for given day of year
         if period == 'historical':
             debiased_doy = vect_app_hist(obs, hist, var, date, day_window)
 
+            # Create mask to use later for plugging in debiased data to template dataset
+            mask = (template.time.dt.month == month) & (template.time.dt.day == day) & (template.time.dt.year >= 1985) & (template.time.dt.year <= 2014)
+
         elif period == 'future':
-            # Unpack extra parameters
+            # Unpack extra parameters for future period
             day_window = int(kwargs.get('day_window'))
             year_window = int(kwargs.get('year_window'))
             bias_type = kwargs.get('bias_type')
@@ -525,6 +549,9 @@ def ECDFM(obs, mod, var, period = 'future', **kwargs):
 
             # Start debiasing future data
             debiased_doy = vect_app_fut(obs, hist, mod, var, date, day_window, year_window, bias_type, dry_day_threshold)
+
+            # Create mask to use later for plugging in debiased data to template dataset
+            mask = (template.time.dt.month == month) & (template.time.dt.day == day) & (template.time.dt.year >= year) & (template.time.dt.year <= year)
 
         # Exit out of function if Nans occur
         if debiased_doy is None:
@@ -535,16 +562,16 @@ def ECDFM(obs, mod, var, period = 'future', **kwargs):
         if var == 'pr':
             # Replace negative precipitation values with zeros
             pr_cond = (debiased_doy < 0)
-            debiased_doy = debiased_doy.where(~pr_cond, 0) # Use ~ to filter for where condition is met
+            debiased_doy = debiased_doy.where(np.logical_not(pr_cond), 0) # Use np.logical_not to filter for where condition is met
 
         elif var == 'sph':
             # Bound lower limit of specific humidity to zero
             min_cond = (debiased_doy < 0)
-            debiased_doy = debiased_doy.where(~min_cond, 0)
+            debiased_doy = debiased_doy.where(np.logical_not(min_cond), 0)
 
             # Bound upper limit of specific humidity to 1 kg kg-1 or 100% pure water
             max_cond = (debiased_doy > 1.0)
-            debiased_doy = debiased_doy.where(~max_cond, 1.0)
+            debiased_doy = debiased_doy.where(np.logical_not(max_cond), 1.0)
 
         elif var == 'srad':
             # Pull lat and lon values from model data
@@ -566,17 +593,11 @@ def ECDFM(obs, mod, var, period = 'future', **kwargs):
 
             # Mask debiased_doy for min and max values
             min_cond = (debiased_doy > min_expanded)
-            debiased_doy = debiased_doy.where(~min_cond, min_expanded)
+            debiased_doy = debiased_doy.where(np.logical_not(min_cond), min_expanded)
             max_cond = (debiased_doy > max_expanded)
-            debiased_doy = debiased_doy.where(~max_cond, max_expanded)
+            debiased_doy = debiased_doy.where(np.logical_not(max_cond), max_expanded)
 
-        # Pull month and day from date
-        day = int(date.strftime('%d'))
-        month = int(date.strftime('%m'))
-        year = int(date.strftime('%Y'))
-
-        # Plug in debiased data
-        mask = (template.time.dt.month == month) & (template.time.dt.day == day) & (template.time.dt.year >= year) & (template.time.dt.year <= year)
+        # Plug debiased data into template dataset
         template[var].data[mask] = debiased_doy 
         logger.info(f'Debiased data for {date} added to dataset!')
 

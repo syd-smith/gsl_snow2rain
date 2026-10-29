@@ -282,6 +282,9 @@ def cdf_plt(var, obs, mod, db_hist, db_fut, dates, lat, lon, save_name, save = T
     db_fut_sel = loc_sel(db_fut, var, lat, lon)
 
     for i, date in enumerate(dates):
+        # Convert date to pd.to_datetime
+        date = pd.to_datetime(date)
+
         # Slice dataset down to a given window size centered on date
         # Default window size is 31 days
         window_size = 31
@@ -290,9 +293,18 @@ def cdf_plt(var, obs, mod, db_hist, db_fut, dates, lat, lon, save_name, save = T
         db_hist_window = running_window_slice(db_hist_sel, date, window_size)
         db_fut_window = running_window_slice(db_fut_sel.copy(deep = True), date, window_size)
 
+        logger.info(f"Date: {date.strftime('%Y-%m-%d')} | Obs Mean Temp: {obs_window.mean().values}")
+        logger.info(f"Date: {date.strftime('%Y-%m-%d')} | Mod Mean Temp: {mod_window.mean().values}")
+        logger.info(f"Date: {date.strftime('%Y-%m-%d')} | DB Hist Mean Temp: {db_hist_window.mean().values}")
+        logger.info(f"Date: {date.strftime('%Y-%m-%d')} | DB fut Mean Temp: {db_fut_window.mean().values}")
+
+        # Pull the year from date
+        year = int(date.strftime('%Y'))
+
         # Slice into historical and future periods
         hist_window = mod_window.sel(time = mod_window.time.dt.year.isin(range(1985, 2015)))
-        fut_window = mod_window.sel(time = mod_window.time.dt.year.isin(range(2015, 2100)))
+        fut_window = mod_window.sel(time = mod_window.time.dt.year.isin(year))
+        db_fut_window = db_fut_window.sel(time = db_fut_window.time.dt.year.isin(year))
         # debiased_window_hist = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(1985, 2015)))
         # debiased_window_fut = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(1985, 2015))) # TODO: change back to futute period
 
@@ -890,20 +902,32 @@ def main(var, wrf_output_location, elevation = False):
     debiased_fut_path = glob.glob(str(parent_dir / 'wrfout_sep' / 'debiased_fut_tmmx.nc'))
     debiased_fut = xr.open_dataset(debiased_fut_path[0], decode_times = True)
 
-    # Location of interest as SLC airport
+    # SLC airport coordinates
     # lat = 40.788
     # lon = -111.978
 
-    # Location of interest at Alta
+    # Alta coordinates
     lat = 40.58083
     lon = -111.63722
+
+    # Ogden coordinates
+    # lat = 41.2228
+    # lon = -111.9733
+
+    # Park city coordinates
+    # lat = 40.646061
+    # lon = -111.49797
+
+    # Provo coordinates
+    # lat = 40.233845
+    # lon = -111.658531
 
     # Test Plots
     # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True) 
     # trend = trend_plt(var, obs, mod, dt_obs, dt_mod, '1985-03-05', lat, lon, save = True)
 
     # CDF plots for SLC Airport
-    cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['1985-01-15', '1985-04-15', '1985-07-15', '1985-10-15'], lat = lat, lon = lon, save_name = f'cdf_alta_{var}',save = True) 
+    cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['2070-01-15', '2070-04-15', '2070-07-15', '2070-10-15'], lat = lat, lon = lon, save_name = f'cdf_alta_2070_{var}',save = True) 
     
     # seasonal = seasonal_bias(var, raw, debiased, save = False)
     # bias_map = min_n_max_bias(var, raw, debiased, save = True) # OOM kill (chunking didn't work might need to try mannual chunking)

@@ -392,9 +392,6 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
 
     # Convert date to a pandas datetime object
     time_dt = pd.to_datetime(today)
-
-    # Keep lat and lon dims as 2d for regridding process
-    dims_2d = ('south_north', 'west_east')
     
     # Save daily data to a new dataset
     daily_ds = xr.Dataset(
@@ -403,8 +400,8 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
         },
         coords = {
             'time': ('time', [time_dt]),
-            'lat': (dims_2d, lat_vals),
-            'lon': (dims_2d, lon_vals)
+            'lat': (dims_3d, lat_vals),
+            'lon': (dims_3d, lon_vals)
         }
     )
 
