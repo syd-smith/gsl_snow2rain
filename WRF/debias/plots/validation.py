@@ -293,6 +293,7 @@ def cdf_plt(var, obs, mod, db_hist, db_fut, dates, lat, lon, save_name, save = T
         db_hist_window = running_window_slice(db_hist_sel, date, window_size)
         db_fut_window = running_window_slice(db_fut_sel.copy(deep = True), date, window_size)
 
+        # Use to check that means from the window slices are different for each date used
         logger.info(f"Date: {date.strftime('%Y-%m-%d')} | Obs Mean Temp: {obs_window.mean().values}")
         logger.info(f"Date: {date.strftime('%Y-%m-%d')} | Mod Mean Temp: {mod_window.mean().values}")
         logger.info(f"Date: {date.strftime('%Y-%m-%d')} | DB Hist Mean Temp: {db_hist_window.mean().values}")
