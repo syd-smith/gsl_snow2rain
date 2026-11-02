@@ -381,7 +381,7 @@ def dry_day_adjustment(hist, fut, dd_thresh):
 
     return fut_offset_bounded
 
-def vect_app_fut(obs, hist, mod, var, date, day_window, year_window, bias_type, dry_day_threshold):
+def vect_app_fut(obs, hist, mod, var, date, day_window, bias_type, dry_day_threshold):
     """
     Debias model data for a given date as a vectorized process. 3D array should be organized as
     (time, lat, lon) where debiasing is performed along the time axis. All data inputs should 
@@ -491,17 +491,17 @@ def ECDFM(obs, hist, mod, var, period = 'future', **kwargs):
         # Debias data for given day of year
         if period == 'historical':
             # Debias historical data in isolation
-            debiased_doy = vect_app_hist(obs, hist, var, date)
+            day_window = int(kwargs.get('day_window'))
+            debiased_doy = vect_app_hist(obs, hist, var, date, day_window)
 
         elif period == 'future':
             # Unpack extra parameters for future period
             day_window = int(kwargs.get('day_window'))
-            year_window = int(kwargs.get('year_window'))
             bias_type = kwargs.get('bias_type')
             dry_day_threshold = float(kwargs.get('dry_day_threshold'))
 
             # Debiasing future data
-            debiased_doy = vect_app_fut(obs, hist, mod, var, date, day_window, year_window, bias_type, dry_day_threshold)
+            debiased_doy = vect_app_fut(obs, hist, mod, var, date, day_window, bias_type, dry_day_threshold)
 
         else:
             debiased_doy = None
@@ -595,6 +595,8 @@ def ECDFM(obs, hist, mod, var, period = 'future', **kwargs):
 # @logger.catch 
 if __name__ == '__main__':
 
+    # TODO: Think about how to handle different calendars
+
     # Track program time in log files
     start = time.perf_counter()
     logger.info(f'Beginning execution of ecdfm debiasing for {os.environ.get("variable")}.')
@@ -619,7 +621,6 @@ if __name__ == '__main__':
 
     fut_config = {
         'day_window' : int(os.environ.get("day_running_window")),
-        'year_window' : int(os.environ.get("year_running_window")),
         'bias_type' : os.environ.get("bias_type"),
         'dry_day_threshold' : float(os.environ.get("dry_day_threshold"))
     }
@@ -643,8 +644,12 @@ if __name__ == '__main__':
     # Close out of unnecessary data
     debiased_fut.close()
 
+    hist_config = {
+        'day_window' : int(os.environ.get("day_running_window"))
+    }
+
     # Pass datasets to debiaser 
-    debiased_hist = ECDFM(obs, hist, hist, var, period = 'historical')
+    debiased_hist = ECDFM(obs, hist, hist, var, period = 'historical', **hist_config)
 
     if save:
         # Create output directory to store new cleaned files

@@ -304,10 +304,7 @@ def cdf_plt(var, obs, mod, db_hist, db_fut, dates, lat, lon, save_name, save = T
 
         # Slice into historical and future periods
         hist_window = mod_window.sel(time = mod_window.time.dt.year.isin(range(1985, 2015)))
-        fut_window = mod_window.sel(time = mod_window.time.dt.year.isin(year))
-        db_fut_window = db_fut_window.sel(time = db_fut_window.time.dt.year.isin(year))
-        # debiased_window_hist = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(1985, 2015)))
-        # debiased_window_fut = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(1985, 2015))) # TODO: change back to futute period
+        fut_window = mod_window.sel(time = mod_window.time.dt.year.isin(range(2015, 2099)))
 
         # Calculate a CDF for each array
         obs_cdf = ECDF(obs_window)
@@ -891,16 +888,10 @@ def main(var, wrf_output_location, elevation = False):
     mod_path = glob.glob(str(parent_dir / 'daily' / f'*{var}*.nc'))
     mod = xr.open_dataset(mod_path[0], decode_times = True)
 
-    dt_obs_path = glob.glob(str(parent_dir / 'wrfout_sep' / 'detrended_obs_tmmx.nc'))
-    dt_obs = xr.open_dataset(dt_obs_path[0], decode_times = True)
-
-    dt_mod_path = glob.glob(str(parent_dir / 'wrfout' / 'detrended_mod_tmmx.nc'))
-    dt_mod = xr.open_dataset(dt_mod_path[0], decode_times = True)
-
-    debiased_hist_path = glob.glob(str(parent_dir / 'wrfout_sep' / 'debiased_hist_tmmx.nc'))
+    debiased_hist_path = glob.glob(str(parent_dir / 'wrfout_window_fix' / 'debiased_hist_tmmx.nc'))
     debiased_hist = xr.open_dataset(debiased_hist_path[0], decode_times = True)
 
-    debiased_fut_path = glob.glob(str(parent_dir / 'wrfout_sep' / 'debiased_fut_tmmx.nc'))
+    debiased_fut_path = glob.glob(str(parent_dir / 'wrfout_window_fix' / 'debiased_fut_tmmx.nc'))
     debiased_fut = xr.open_dataset(debiased_fut_path[0], decode_times = True)
 
     # SLC airport coordinates
@@ -908,8 +899,8 @@ def main(var, wrf_output_location, elevation = False):
     # lon = -111.978
 
     # Alta coordinates
-    lat = 40.58083
-    lon = -111.63722
+    # lat = 40.58083
+    # lon = -111.63722
 
     # Ogden coordinates
     # lat = 41.2228
@@ -920,15 +911,15 @@ def main(var, wrf_output_location, elevation = False):
     # lon = -111.49797
 
     # Provo coordinates
-    # lat = 40.233845
-    # lon = -111.658531
+    lat = 40.233845
+    lon = -111.658531
 
     # Test Plots
     # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True) 
     # trend = trend_plt(var, obs, mod, dt_obs, dt_mod, '1985-03-05', lat, lon, save = True)
 
     # CDF plots for SLC Airport
-    cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['2070-01-15', '2070-04-15', '2070-07-15', '2070-10-15'], lat = lat, lon = lon, save_name = f'cdf_alta_2070_{var}',save = True) 
+    cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['2070-01-15', '2070-04-15', '2070-07-15', '2070-10-15'], lat = lat, lon = lon, save_name = f'cdf_provo_{var}',save = True) 
     
     # seasonal = seasonal_bias(var, raw, debiased, save = False)
     # bias_map = min_n_max_bias(var, raw, debiased, save = True) # OOM kill (chunking didn't work might need to try mannual chunking)
