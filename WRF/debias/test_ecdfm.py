@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 import sys
 import xarray as xr
+import xclim
 
 os.environ["running_window"] = '31'
 os.environ["dry_day_threshold"] = '0.254'
@@ -23,7 +24,7 @@ os.environ["dry_day_threshold"] = '0.254'
 current_dir = Path(__file__).resolve().parent
 sys.path.append(str(current_dir))
 
-from ecdfm_man import StepFunc3D, vectorized_ECDF, ECDFM, doy_mask, vect_app, detrend_ds, retrend_ds, running_window_slice, loc_sel
+from ecdfm_man import StepFunc3D, vectorized_ECDF, ECDFM, doy_mask, vect_app_hist, vect_app_fut, running_window_slice, loc_sel
 
 # ======================
 # - Create Dummy Data - 
@@ -199,47 +200,48 @@ def ds_dist(seed, dist, min_val = 275, max_val = 310, mean_val = 293):
 # - Pytest Fucntions - 
 # ====================
 
-def test_trend():
+# def test_trend():
 
-    # Call dumy dataset with a trend of 0.2
-    data = ds_dummy(trend = '*0.2')
+#     # Call dumy dataset with a trend of 0.2
+#     data = ds_dummy(trend = '*0.2')
 
-    # Pull the time values from the dataset
-    time_idx = np.arange(len(data['time'].values))
-    # Use numpy to find y=mx+b
-    slope, intercept = np.polyfit(time_idx, data['tmmx'].isel(lat = 0, lon = 0).values, 1)
-    # Ensure that what numpy calculated is close to what was expected
-    assert np.isclose(slope, 0.2)
-    assert np.isclose(intercept, data['tmmx'].values[0][0][0])
+#     # Pull the time values from the dataset
+#     time_idx = np.arange(len(data['time'].values))
+#     # Use numpy to find y=mx+b
+#     slope, intercept = np.polyfit(time_idx, data['tmmx'].isel(lat = 0, lon = 0).values, 1)
+#     # Ensure that what numpy calculated is close to what was expected
+#     assert np.isclose(slope, 0.2)
+#     assert np.isclose(intercept, data['tmmx'].values[0][0][0])
 
-    # Calculate the trend
-    trend = (slope * time_idx) + intercept
-    trend_3D = np.broadcast_to(trend[:, None, None], data['tmmx'].shape)
+#     # Calculate the trend
+#     trend = (slope * time_idx) + intercept
+#     trend_3D = np.broadcast_to(trend[:, None, None], data['tmmx'].shape)
 
-    # Detrend the data
-    detrended_data = data['tmmx'] - trend_3D
+#     # Detrend the data
+#     detrended_data = data['tmmx'] - trend_3D
 
-    # Calculate the data's mean and broadcast it to a 3D array
-    data_mean = np.mean(data['tmmx'].isel(lat = 0, lon = 0).values)
-    detrended_with_mean = detrended_data + data_mean
+#     # Calculate the data's mean and broadcast it to a 3D array
+#     data_mean = np.mean(data['tmmx'].isel(lat = 0, lon = 0).values)
+#     detrended_with_mean = detrended_data + data_mean
 
-    # Call function that is being tested
-    func_detrended, func_trend, func_avg = detrend_ds(data, 'tmmx')
+#     # Call function that is being tested
+#     func_detrended, func_trend, func_avg = detrend_ds(data, 'tmmx')
 
-    # Make assertions based on manual detrending
-    np.testing.assert_allclose(func_detrended['tmmx'].values, detrended_with_mean.values, rtol = 1e-5, atol = 1e-5)
-    np.testing.assert_allclose(func_trend, trend_3D, rtol = 1e-5, atol = 1e-5)
-    assert np.isclose(func_avg.isel(lat = 0, lon = 0), data_mean)
+#     # Make assertions based on manual detrending
+#     np.testing.assert_allclose(func_detrended['tmmx'].values, detrended_with_mean.values, rtol = 1e-5, atol = 1e-5)
+#     np.testing.assert_allclose(func_trend, trend_3D, rtol = 1e-5, atol = 1e-5)
+#     assert np.isclose(func_avg.isel(lat = 0, lon = 0), data_mean)
 
-def test_running_window():
+def test_running_window_one_year():
     # Call dummy dataset without a trend
-    ds = ds_dummy()
+    ds = ds_dummy(start_day = '1984-06-01', stop_day = '1985-06-01')
 
     # Set date of interest
     date = '1985-01-05'
 
     # Call dummy dataset with constrained date range and no trend
     ds_sliced_ctrl = ds_dummy(start_day = '1984-12-21', stop_day = '1985-01-20')
+    ds_sliced_ctrl = ds_sliced_ctrl.sortby('time') # Sort time steps in chronological order
 
     # Slice data using running_window_slice
     ds_sliced_test = running_window_slice(ds, date)
@@ -586,7 +588,8 @@ def fut_hist_isolated(var, vectorized = True, save = True):
         retrended_hist.to_netcdf(retrended_hist_path)
         retrended_fut.to_netcdf(retrended_fut_path)
 
-fut_hist_isolated('tmmx')
+# TODO: Think about how to handle different calendars
+# TODO: check that all 12-31's got included - gridMET seems to not have this issue just WRF
+# TODO: make sure we're not losing anything on the edges that takes off the GSL region when gridmet is interpolated
+# TODO: log errors if the workflow isn't completed sequentially
 
-# debias_hist_only('tmmx', current_dir)
-# %%

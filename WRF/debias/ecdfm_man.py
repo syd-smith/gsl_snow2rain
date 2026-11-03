@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 import time
 import xarray as xr
+from xclim.core.calendar import get_calendar
 
 # ==================================
 # - Establish Relative File Path - 
@@ -252,21 +253,33 @@ def running_window_slice(data, date, day_window = 31):
     start_doy = target_doy - half_window
     stop_doy = target_doy + half_window
 
-    # TODO: address hard coding max_days to 365 -> not every year is the same length but idk another way to handle it better
-    # Pull out how many days there are in data's year
-    # target_year = date_pd.year
-    # year_data = data.sel(time = str(target_year))
-    # max_days = int(year_data.time.dt.dayofyear.max().values)
+    # Dictionary pulled from xclim.core.calendar source code
+    max_doy = {
+        "standard": 366,
+        "gregorian": 366,
+        "proleptic_gregorian": 366,
+        "julian": 366,
+        "noleap": 365,
+        "365_day": 365,
+        "all_leap": 366,
+        "366_day": 366,
+        "360_day": 360,
+    }
+    # TODO: address flexible number of max days in a dataset -> not every year is the same length
+
+    # Find data's calendar type and use to set max number of days in a year
+    cal_type = get_calendar(data)
+    max_days = max_doy[cal_type]
 
     # DOY calendar counter starts at 1 so if below this then slicing needs to dip into december of the previous year
     if start_doy < 1:
-        # Assumes a 365 day year for wrapping
-        alt_start = start_doy + 365
+        # Uses max days for wrapping (set to loop on leap year)
+        alt_start = start_doy + max_days
         window = data.sel(time = (data.time.dt.dayofyear >= alt_start) | (data.time.dt.dayofyear <= stop_doy))
 
-    elif stop_doy > 365:
+    elif stop_doy > max_days:
         # Wraps around into January of the following year if it is over the max amount of days
-        alt_stop = stop_doy - 365
+        alt_stop = stop_doy - max_days
         window = data.sel(time = (data.time.dt.dayofyear >= start_doy) | (data.time.dt.dayofyear <= alt_stop))
 
     else:
@@ -591,12 +604,11 @@ def ECDFM(obs, hist, mod, var, period = 'future', **kwargs):
 
     return template
 
-# Catch silent errors and report to log file
-# @logger.catch 
+# ======================
+# ---- Entry Point ----
+# ======================
+
 if __name__ == '__main__':
-
-    # TODO: Think about how to handle different calendars
-
     # Track program time in log files
     start = time.perf_counter()
     logger.info(f'Beginning execution of ecdfm debiasing for {os.environ.get("variable")}.')
@@ -631,11 +643,11 @@ if __name__ == '__main__':
     # Intermediate save for future data
     if save:
         # Create output directory to store new cleaned files
-        output_dir = current_dir / 'wrfout_window_fix'
+        output_dir = current_dir / 'wrfout'
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
-        debiased_fut_path = os.path.join(output_dir, f'debiased_fut_{var}.nc')
+        debiased_fut_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_2015-2099.nc')
     
         # Save data to netCDF file
         debiased_fut.to_netcdf(debiased_fut_path)
@@ -653,11 +665,11 @@ if __name__ == '__main__':
 
     if save:
         # Create output directory to store new cleaned files
-        output_dir = current_dir / 'wrfout_window_fix'
+        output_dir = current_dir / 'wrfout'
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
-        debiased_hist_path = os.path.join(output_dir, f'debiased_hist_{var}.nc')
+        debiased_hist_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_1985-2014.nc')
 
         # Save data to netCDF file
         debiased_hist.to_netcdf(debiased_hist_path)

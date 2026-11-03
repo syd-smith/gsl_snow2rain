@@ -230,7 +230,6 @@ def interpo_MET(WRF_file, location, var, year):
     logger.success('gridMET successfully interpolated!')
     logger.debug(ds_out[var].values)
 
-    # TODO: make sure we're not losing anything on the edges that takes off the GSL region
     return ds_out
 
 # Make function compatible with with blocks 
@@ -357,7 +356,6 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
     elif var == 'tmmn':
         # Select daily min along XTIME dim for every gridpoint
         adj_data = time_clean_ds[var].min(dim = 'time')
-        # TODO: check if this is most efficient way because it seems to be slower
 
         # Expand time dim back out after it was collapsed
         daily_data = adj_data.expand_dims('time')
@@ -429,85 +427,78 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
 
 # Catch silent errors and report to log file
 @logger.catch 
-def main(variable, domain, WRF_in, MET_in):
+def main(var, domain, WRF_in, MET_in):
     # State what variable is being used
-    logger.info(f'Debiasing for {variable}.')
+    logger.info(f'Debiasing for {var}.')
 
-    if variable == 'wind':
-        variables = ['uas', 'vas']
-    else:
-        variables = [variable]
+    # Generate list of WRF input files
+    files = get_fpaths(WRF_in, domain)
+    hist_period = range(1985, 2015) # Set to historical period for obs data
+    
+    # Set to full historical period
+    for year in hist_period:
+        # Call and interpolate gridMET data (obs) for the given year 
+        MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
 
-    for var in variables:
-        # TODO: log errors if the workflow isn't completed sequentially
-        # Generate list of WRF input files
-        files = get_fpaths(WRF_in, domain)
-        hist_period = range(1985, 2015) # Set to historical period for obs data
-        
-        # Set to full historical period
-        for year in hist_period:
-            # Call and interpolate gridMET data (obs) for the given year 
-            MET_data = interpo_MET(files[0], MET_in, var, year) # pass first WRF file in files as example grid
+        # Save year of interpolated gridMET data
+        save_data = data_saver(MET_data, 'gridMET', var, year)
 
-            # Save year of interpolated gridMET data
-            save_data = data_saver(MET_data, 'gridMET', var, year)
+    # Combine all gridMET files into a single file with context manager
+    with xr.open_mfdataset(
+        glob.glob(str(current_dir / 'gridMET' / var / '*.nc')), 
+        combine = 'nested', 
+        concat_dim = 'time', 
+        preprocess = fix_time_coord
+        ) as gridmet_open:
 
-        # Combine all gridMET files into a single file with context manager
-        with xr.open_mfdataset(
-            glob.glob(str(current_dir / 'gridMET' / var / '*.nc')), 
-            combine = 'nested', 
-            concat_dim = 'time', 
-            preprocess = fix_time_coord
-            ) as gridmet_open:
+        # Write file to netcdf
+        gridmet_open.sortby('time').to_netcdf(current_dir / 'gridMET' / f'gridMET_GSLBIP_{var}.nc')
+    
+    logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
 
-            # Write file to netcdf
-            gridmet_open.sortby('time').to_netcdf(current_dir / 'gridMET' / f'gridMET_GSLBIP_{var}.nc')
-        
-        logger.success(f'All gridMET files successfully interpolated and saved for {var}!')
+    # Set to historical + future period
+    model_period = range(1985, 2100)
+    for year in model_period:
+        # Create date range using pandas
+        # TODO: set to dates for full year
+        dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
 
-        # Set to historical + future period
-        model_period = range(1985, 2100)
-        for year in model_period:
-            # Create date range using pandas
-            # TODO: set to dates for full year
-            dates = pd.date_range(start = f'{year}-01-01', end = f'{year}-12-31', freq = 'D') 
+        for day in dates:
+            if day == dates[0]:
+                # Set the day you want to be working with to today
+                today = day.strftime('%Y-%m-%d') # Turn day in to usable date string 
+                continue
 
-            for day in dates:
-                if day == dates[0]:
-                    # Set the day you want to be working with to today
-                    today = day.strftime('%Y-%m-%d') # Turn day in to usable date string 
-                    continue
+            # Handle the last day of the year
+            elif day == dates[-1]:
+                # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
+                tomorrow = day.strftime('%Y-%m-%d')
 
-                # Handle the last day of the year
-                elif day == dates[-1]:
-                    # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
-                    tomorrow = day.strftime('%Y-%m-%d')
+                # Create clean file of daily WRF data
+                daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
 
-                    # Create clean file of daily WRF data
-                    daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
+                # Set tomorrow as the new today to move on to the next series
+                today = tomorrow
 
-                    # Set tomorrow as the new today to move on to the next series
-                    today = tomorrow
+                # Check that you aren't calling data outside of the model's date range
+                if (year + 1) not in model_period:
+                    tomorrow = f'{year}-12-31'
+                else: 
+                    tomorrow = f'{year + 1}-01-01'
 
-                    # Check that you aren't calling data outside of the model's date range
-                    if (year + 1) not in model_period:
-                        tomorrow = f'{year}-12-31'
-                    else: 
-                        tomorrow = f'{year + 1}-01-01'
+                # Create clean file of daily WRF data for the last day in the date range
+                logger.info(f'Today for 12-31 is {today} and tomorrow is {tomorrow}.')
+                daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
 
-                    # Create clean file of daily WRF data for the last day in the date range
-                    logger.info(f'Today for 12-31 is {today} and tomorrow is {tomorrow}.')
-                    daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
+            else:
+                # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
+                tomorrow = day.strftime('%Y-%m-%d')
 
-                else:
-                    # Because of the offset from UTC to MT you need to pull in the next day worth of data as well
-                    tomorrow = day.strftime('%Y-%m-%d')
+                # Create clean file of daily WRF data
+                daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
 
-                    # Create clean file of daily WRF data
-                    daily_avg = WRF_daily(today, tomorrow, files, var, domain, current_dir)
-
-                    # Set tomorrow as the new today to move on to the next series
-                    today = tomorrow
+                # Set tomorrow as the new today to move on to the next series
+                today = tomorrow
 
 # ======================
 # ---- Entry Point ----
@@ -518,10 +509,9 @@ if __name__ == '__main__':
     start = time.perf_counter()
     logger.info(f'Beginning execution of data preprocessing for {os.environ.get("variable")}.')
 
-    # TODO: check that all 12-31's got included - gridMET seems to not have this issue just WRF
     # Call inputs from slurm script
     main(
-        variable = os.environ.get("variable"),
+        var = os.environ.get("variable"),
         domain = os.environ.get("domain"),
         WRF_in = os.environ.get("WRF_in"), 
         MET_in = os.environ.get("MET_in")

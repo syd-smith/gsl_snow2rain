@@ -99,7 +99,7 @@ def best_fit(var, ds):
     return best_line
 
 
-def trend_plt(var, obs, mod, detrended_obs, detrended_mod, date, lat, lon, save = False):
+def trend_plt(var, obs, hist, fut, db_hist, db_fut, date, lat, lon, save_name = 'tend_plot', save = False):
     """
     Create a graph of model WRF output data, observational data, and both detrended datasets to verify detrending 
     was successful. Data plotted is from a single location and a 31 day running window centered around a given date.
@@ -107,24 +107,26 @@ def trend_plt(var, obs, mod, detrended_obs, detrended_mod, date, lat, lon, save 
     logger.info(f'Creating detrending verification plot for {var}.')
 
     # Initialize plot
-    fig, ax = plt.subplots(2, 1, figsize = (12, 6), sharex = True)
+    fig, ax = plt.subplots(1, 1, figsize = (12, 6), sharex = True)
 
     # Slice data down to a location of interest
     obs_loc = loc_sel(obs, var, lat, lon)
-    mod_loc = loc_sel(mod, var, lat, lon)
-    dt_obs_loc = loc_sel(detrended_obs, var, lat, lon)
-    dt_mod_loc = loc_sel(detrended_mod, var, lat, lon)
+    hist_loc = loc_sel(hist, var, lat, lon)
+    fut_loc = loc_sel(fut, var, lat, lon)
+    db_hist_loc = loc_sel(db_hist, var, lat, lon)
+    db_fut_loc = loc_sel(db_fut, var, lat, lon)
 
     # Take the running window of each dataset
     obs_sliced = running_window_slice(obs_loc, date)
-    mod_sliced = running_window_slice(mod_loc, date)
-    dt_obs_sliced = running_window_slice(dt_obs_loc, date)
-    dt_mod_sliced = running_window_slice(dt_mod_loc, date)
+    hist_sliced = running_window_slice(hist_loc, date)
+    fut_sliced = running_window_slice(fut_loc, date)
+    db_hist_sliced = running_window_slice(db_hist_loc, date)
+    db_fut_sliced = running_window_slice(db_fut_loc, date)
   
     logger.info(f'Location slicing and date selection completed for {var} detrend plot.')
     
     # Graph obs data
-    ax[0].plot(
+    ax.plot(
         obs_sliced.time,
         obs_sliced.values, 
         'k-.', 
@@ -132,7 +134,7 @@ def trend_plt(var, obs, mod, detrended_obs, detrended_mod, date, lat, lon, save 
         label = 'Obs'
     )
 
-    ax[0].plot(
+    ax.plot(
             obs_sliced.time,
             best_fit(var, obs_sliced), 
             'k-', 
@@ -140,56 +142,70 @@ def trend_plt(var, obs, mod, detrended_obs, detrended_mod, date, lat, lon, save 
         )
 
     # Graph raw WRF output data
-    ax[0].plot(
-        mod_sliced.time, 
-        mod_sliced.values, 
+    ax.plot(
+        hist_sliced.time, 
+        hist_sliced.values, 
         'r-.', 
         alpha = 0.9,
         label = 'WRF'
     )
 
-    ax[0].plot(
-        mod_sliced.time,
-        best_fit(var, mod_sliced), 
+    ax.plot(
+        hist_sliced.time,
+        best_fit(var, hist_sliced), 
         'r-', 
         alpha = 0.9, 
     )
 
-    # Graph detrended obs data
-    ax[1].plot(
-        dt_obs_sliced.time,
-        dt_obs_sliced.values, 
-        'k-.',
+    ax.plot(
+        fut_sliced.time, 
+        fut_sliced.values, 
+        'r-.', 
+        alpha = 0.9,
+        label = 'WRF'
+    )
+
+    ax.plot(
+        fut_sliced.time,
+        best_fit(var, fut_sliced), 
+        'r-', 
+        alpha = 0.9, 
+    )
+
+    # Graph debiased data
+    ax.plot(
+        db_hist_sliced.time,
+        db_hist_sliced.values, 
+        'g-.',
         alpha = 0.9, 
         label = 'Detrended Obs'
     )
 
     ax[1].plot(
-        dt_obs_sliced.time,
-        best_fit(var, dt_obs_sliced), 
-        'k-', 
+        db_hist_sliced.time,
+        best_fit(var, db_hist_sliced), 
+        'g-', 
         alpha = 0.9, 
     )
 
-    # Graph detrended WRF model output data
+    ax.plot(
+            db_fut_sliced.time,
+            db_fut_sliced.values, 
+            'g-.',
+            alpha = 0.9, 
+            label = 'Detrended Obs'
+        )
+    
     ax[1].plot(
-        dt_mod_sliced.time,
-        dt_mod_sliced.values, 
-        'r-.',
-        alpha = 0.9, 
-        label = 'Detrended WRF'
-    )
-
-    ax[1].plot(
-        dt_mod_sliced.time,
-        best_fit(var, dt_mod_sliced), 
-        'r-', 
+        db_fut_sliced.time,
+        best_fit(var, db_fut_sliced), 
+        'g-', 
         alpha = 0.9, 
     )
 
     for i in [0, 1]:
         # Adjust plot format settings
-        ax[i].set_title(f'Trended vs. Detrended {title[var]} Data')
+        # ax[i].set_title(f'Trended vs. Detrended {title[var]} Data')
         ax[i].set_ylabel(f'{var} ({units[var]})')
         ax[i].set_xlabel('Time')
         ax[i].grid(True, linestyle = '--', alpha = 0.5)
@@ -207,7 +223,7 @@ def trend_plt(var, obs, mod, detrended_obs, detrended_mod, date, lat, lon, save 
 
     # Opt to save image to sub directory
     if save:
-        save_path = current_dir / 'figures' / f'trend_{var}.png'
+        save_path = current_dir / 'figures' / f'{save_name}.png'
         fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Trend plot saved to: {save_path}')
 
@@ -385,7 +401,7 @@ def cdf_plt(var, obs, mod, db_hist, db_fut, dates, lat, lon, save_name, save = T
 
 def calc_stat(data, var, stat = 'mean'):
     """"
-    Average data based on the specified statistic.
+    Average data based on the specified statistic. Accepts xr.DataArray as input.
     """
     logger.info(type(data))
 
@@ -395,17 +411,17 @@ def calc_stat(data, var, stat = 'mean'):
         logger.info(f'Quantile value of {q_val} selected for {var}.')
 
         # Apply quantile function
-        dayOyear = data[var].quantile(q_val)
+        dayOyear = data.quantile(q_val)
         logger.success(f'Quantile of {q_val} successfully calculated!')
 
     # Check for mean or median if stat specificed is not a float
     except (ValueError, TypeError):
         if stat == 'mean':
-            dayOyear = data[var].mean()
+            dayOyear = data.mean()
             logger.success('Mean of data successfully calculated!')
 
         elif stat == 'median':
-            dayOyear = data[var].median()
+            dayOyear = data.median()
             logger.success('Median of data successfully calculated!')
 
         else:
@@ -415,7 +431,7 @@ def calc_stat(data, var, stat = 'mean'):
     logger.info(f'Day of year {stat} complete for {var}.')
     return float(dayOyear.values)
 
-def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save = False): 
+def annual_scatter(var, obs, hist, fut, db_hist, db_fut, lat, lon, stats = ['median'], save_name = 'annual_scatter', save = False): 
     """
     Create a scatter plot showing the annual cycle of given data over the entire spatial region based on that stat argument passed.
     """
@@ -435,8 +451,10 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
     logger.info(f'Obs dataset type: {type(obs)}')
     # Slice dataset to a specific location
     obs_sel = loc_sel(obs, var, lat, lon)
-    raw_sel = loc_sel(raw, var, lat, lon)
-    debiased_sel = loc_sel(debiased, var, lat, lon)
+    hist_sel = loc_sel(hist, var, lat, lon)
+    fut_sel = loc_sel(fut, var, lat, lon)
+    db_hist_sel = loc_sel(db_hist, var, lat, lon)
+    db_fut_sel = loc_sel(db_fut, var, lat, lon)
     logger.info(f'Obs dataset type after location selection {type(obs_sel)}')
 
     # Create list of dates
@@ -463,22 +481,18 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
         # Slice dataset down to a given window size centered on date
         # Default window size is 31 days
         obs_window = running_window_slice(obs_sel, date)
-        raw_window = running_window_slice(raw_sel, date)
-        debiased_window = running_window_slice(debiased_sel, date)
-
-        # Slice into historical and future periods
-        raw_window_hist = raw_window.sel(time = raw_window.time.dt.year.isin(range(1985, 2015)))
-        raw_window_fut = raw_window.sel(time = raw_window.time.dt.year.isin(range(2015, 2100)))
-        debiased_window_hist = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(1985, 2015)))
-        debiased_window_fut = debiased_window.sel(time = debiased_window.time.dt.year.isin(range(2015, 2100)))
+        hist_window = running_window_slice(hist_sel, date)
+        fut_window = running_window_slice(fut_sel, date)
+        db_hist_window = running_window_slice(db_hist_sel, date)
+        db_fut_window = running_window_slice(db_fut_sel, date)
 
         for stat in stats:
             # Calculate the given stat for the sliced dataset
             obs_stat = calc_stat(obs_window, var, stat)
-            raw_stat_hist = calc_stat(raw_window_hist, var, stat)
-            raw_stat_fut = calc_stat(raw_window_fut, var, stat)
-            debiased_stat_hist = calc_stat(debiased_window_hist, var, stat)
-            debiased_stat_fut = calc_stat(debiased_window_fut, var, stat)
+            raw_stat_hist = calc_stat(hist_window, var, stat)
+            raw_stat_fut = calc_stat(fut_window, var, stat)
+            debiased_stat_hist = calc_stat(db_hist_window, var, stat)
+            debiased_stat_fut = calc_stat(db_fut_window, var, stat)
 
             # Save the result to a list for that stat
             stat_results[stat]['obs'].append(obs_stat)
@@ -491,12 +505,10 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
         
         # Close all datasets out of memory
         obs_window.close()
-        raw_window.close()
-        debiased_window.close()
-        raw_window_hist.close()
-        raw_window_fut.close()
-        debiased_window_hist.close()
-        debiased_window_fut.close()
+        hist_window.close()
+        fut_window.close()
+        db_hist_window.close()
+        db_fut_window.close()
 
     # Create a subplot for each stat
     for i, stat in enumerate(stats):
@@ -573,7 +585,7 @@ def annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median'], save =
     # Opt to save image to sub directory
     if save:
         stat_str = '_'.join(map(str, stats)) # Pull out items from stat to add to filename
-        save_path = current_dir / 'figures' / f'annual_scatter_{var}_{stat_str}_lat:{float(debiased_sel["lat"][0]):.2f}_lon:{float(debiased_sel["lon"][0]):.2f}.png' # Save using actual lat and lon values used
+        save_path = current_dir / 'figures' / f'{save_name}.png' # Save using actual lat and lon values used
         fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Annual scatter plot saved to: {save_path}')
 
@@ -888,6 +900,10 @@ def main(var, wrf_output_location, elevation = False):
     mod_path = glob.glob(str(parent_dir / 'daily' / f'*{var}*.nc'))
     mod = xr.open_dataset(mod_path[0], decode_times = True)
 
+    # Separate model data into historical and future periods
+    hist = mod.sel(time = slice('1985-01-01', '2014-12-31'))
+    fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
+
     debiased_hist_path = glob.glob(str(parent_dir / 'wrfout_window_fix' / 'debiased_hist_tmmx.nc'))
     debiased_hist = xr.open_dataset(debiased_hist_path[0], decode_times = True)
 
@@ -895,8 +911,8 @@ def main(var, wrf_output_location, elevation = False):
     debiased_fut = xr.open_dataset(debiased_fut_path[0], decode_times = True)
 
     # SLC airport coordinates
-    # lat = 40.788
-    # lon = -111.978
+    lat = 40.788
+    lon = -111.978
 
     # Alta coordinates
     # lat = 40.58083
@@ -911,15 +927,15 @@ def main(var, wrf_output_location, elevation = False):
     # lon = -111.49797
 
     # Provo coordinates
-    lat = 40.233845
-    lon = -111.658531
+    # lat = 40.233845
+    # lon = -111.658531
 
     # Test Plots
-    # scatter = annual_scatter(var, obs, raw, debiased, lat, lon, stats = ['median', 0.95, 0.5], save = True) 
-    # trend = trend_plt(var, obs, mod, dt_obs, dt_mod, '1985-03-05', lat, lon, save = True)
+    # scatter = annual_scatter(var, obs, hist, fut, debiased_hist, debiased_fut, lat, lon, stats = ['median', 0.95, 0.5], save_name = f'annual_scatter_provo_{var}', save = True) 
+    trend = trend_plt(var, obs, hist, fut, debiased_hist, debiased_fut, '1985-03-05', lat, lon, save_name = f'trend_plot_slc_airport_{var}', save = True)
 
     # CDF plots for SLC Airport
-    cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['2070-01-15', '2070-04-15', '2070-07-15', '2070-10-15'], lat = lat, lon = lon, save_name = f'cdf_provo_{var}',save = True) 
+    # cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['2070-01-15', '2070-04-15', '2070-07-15', '2070-10-15'], lat = lat, lon = lon, save_name = f'cdf_provo_{var}',save = True) 
     
     # seasonal = seasonal_bias(var, raw, debiased, save = False)
     # bias_map = min_n_max_bias(var, raw, debiased, save = True) # OOM kill (chunking didn't work might need to try mannual chunking)
