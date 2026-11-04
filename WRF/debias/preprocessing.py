@@ -362,14 +362,23 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
 
     elif var == 'pr':
         # WRF stores precipitation as a continuously increasing staircase - difference first and last stairstep in a day to get true precip value for that day
-        adj_data= time_clean_ds.isel(time = -1) - time_clean_ds.isel(time = 0) # -1 grabs last index regardless of how many timestamps there are
+        adj_data = time_clean_ds.isel(time = -1) - time_clean_ds.isel(time = 0) # -1 grabs last index regardless of how many timestamps there are
         daily_data = adj_data[var].expand_dims('time')
 
         # Verify that precipitation values only are positive
-        assert (daily_data >= 0).all() or logger.error('Found negative precipitation values.')
+        if (daily_data < 0).any().item():
+            logger.error('Found negative precipitation values.')
+
+            # Replace negative precipitation values with zeros
+            pr_cond = (daily_data < 0)
+            daily_data = daily_data.where(np.logical_not(pr_cond), 0) # Use np.logical_not to filter for where condition is met
+            logger.info('Negative precipitation values replaced with zeros.')
+
+        else:
+            logger.info('No negative precipitation values found!')
 
     elif var == 'sph':
-        # Find daily average 
+        # Find daily average
         daily_avg = time_clean_ds[var].mean(dim = 'time')
         
         # Convert Q2 to specific humidity
