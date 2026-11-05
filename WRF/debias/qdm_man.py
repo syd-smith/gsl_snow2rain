@@ -126,7 +126,7 @@ class StepFunc3D:
 
         return result
 
-class vectorized_ECDF(StepFunc3D):
+class vectorized_QDM(StepFunc3D):
     """
     This class expects a 3D array of (time, lat, lon). CDF calculations are performed along the time axis
     therefore returning a unique CDF for each grid point.
@@ -156,13 +156,13 @@ class vectorized_ECDF(StepFunc3D):
         sorted_y = np.broadcast_to(percentile_1d[:, None, None], sorted_x.shape).copy() # Add None for the lat and lon dims so it knows to stretch over those
         # .copy() makes it it's own array that is stored in memory (not dependent on percentile_1d)
 
-        # Initialize the StepFunc3D parent class -> makes the ECDF callable as a step function
+        # Initialize the StepFunc3D parent class -> makes the empirical CDF callable as a step function
         super().__init__(x = sorted_x, y = sorted_y, ival = 0, sorted = True, side = side)
 
-# TODO: linear interpolation for the inverse ECDF
+# TODO: linear interpolation for the inverse QDM
     def inverse(self, p):
         """
-        Inverts the ECDF function to accept percentiles and return data values.
+        Inverts the QDM function to accept percentiles and return data values.
         """
         p = np.asarray(p, dtype = float)
 
@@ -334,8 +334,8 @@ def vect_app_hist(obs, hist, var, date, day_window):
         return NotImplementedError
 
     # Create CDFs from sliced datasets
-    obs_cdf = vectorized_ECDF(obs_sliced[var].values)
-    hist_cdf = vectorized_ECDF(hist_sliced[var].values)
+    obs_cdf = vectorized_QDM(obs_sliced[var].values)
+    hist_cdf = vectorized_QDM(hist_sliced[var].values)
 
     # Mask dataset to given date
     hist_date = doy_mask(hist, date) # This should select day of interest across all years in ds
@@ -426,9 +426,9 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, bias_type, dry_day_thres
         return NotImplementedError
 
     # Create CDFs from sliced datasets
-    obs_cdf = vectorized_ECDF(obs_sliced[var].values)
-    hist_cdf = vectorized_ECDF(hist_sliced[var].values)
-    mod_cdf = vectorized_ECDF(mod_sliced[var].values)
+    obs_cdf = vectorized_QDM(obs_sliced[var].values)
+    hist_cdf = vectorized_QDM(hist_sliced[var].values)
+    mod_cdf = vectorized_QDM(mod_sliced[var].values)
     
     # Mask original dataset to given date
     mod_date = doy_mask(mod, date) # This should select day of interest across all years in ds
@@ -481,9 +481,9 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, bias_type, dry_day_thres
 
     return mod_bias_corrected
 
-def ECDFM(obs, hist, mod, var, period = 'future', **kwargs):
+def QDM(obs, hist, mod, var, period = 'future', **kwargs):
     """
-    Performs ECDFM quantile mapping debiasing process on given data based on data from a given histroical
+    Performs Quantile Distance Mapping (QDM) debiasing process on given data based on data from a given histroical
     period and corresponding observational data. Model data should include both historical and future data. 
     """
 
@@ -611,7 +611,7 @@ def ECDFM(obs, hist, mod, var, period = 'future', **kwargs):
 if __name__ == '__main__':
     # Track program time in log files
     start = time.perf_counter()
-    logger.info(f'Beginning execution of ecdfm debiasing for {os.environ.get("variable")}.')
+    logger.info(f'Beginning execution of QDM debiasing for {os.environ.get("variable")}.')
 
     # Pull inputs from slurm script
     var = os.environ.get("variable")
@@ -638,7 +638,7 @@ if __name__ == '__main__':
     }
 
     # Pass datasets to debiaser 
-    debiased_fut = ECDFM(obs, hist, fut, var, period = 'future', **fut_config)
+    debiased_fut = QDM(obs, hist, fut, var, period = 'future', **fut_config)
 
     # Intermediate save for future data
     if save:
@@ -661,7 +661,7 @@ if __name__ == '__main__':
     }
 
     # Pass datasets to debiaser 
-    debiased_hist = ECDFM(obs, hist, hist, var, period = 'historical', **hist_config)
+    debiased_hist = QDM(obs, hist, hist, var, period = 'historical', **hist_config)
 
     if save:
         # Create output directory to store new cleaned files

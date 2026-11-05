@@ -47,7 +47,7 @@ cdo cat daily/${variable}/*.nc daily/wrf_raw_GSLBIP_multimodel_ssp245_${variable
 echo "Concatenation complete!"
 
 # Call python file
-${PYTHON_BIN} ecdfm_man.py 
+${PYTHON_BIN} qdm_man.py 
 
 
 
