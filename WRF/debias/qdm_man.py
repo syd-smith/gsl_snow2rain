@@ -457,7 +457,7 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, bias_type, dry_day_thres
         # Apply future offset to observational values 
         mod_bias_corrected = obs_vals + fut_offset
 
-    elif bias_type == 'multipicative': # Should only be used for precipitation and specific humidity
+    elif bias_type == 'multiplicative': # Should only be used for precipitation and specific humidity
         # Calculate the future offset (ratio between historical and future period)
         fut_offset = dry_day_adjustment(hist_vals, mod_date[var].values, dry_day_threshold)
 
@@ -465,7 +465,7 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, bias_type, dry_day_thres
         mod_bias_corrected = obs_vals * fut_offset
 
     else:
-        logger.error('Incorrect bias_type selected. Please use "additive" or "multipicative".')
+        logger.error('Incorrect bias_type selected. Please use "additive" or "multiplicative".')
         return None
 
     # End script early if there are Nans in data
@@ -571,7 +571,7 @@ def QDM(obs, hist, mod, var, period = 'future', **kwargs):
         # Plug in debiased data
         mask = (template.time.dt.month == month) & (template.time.dt.day == day)
         template[var].data[mask] = debiased_doy 
-        logger.info(f'Debiased data for {date} added to dataset!')
+        logger.info(f'Debiased data for {date.strftime('%m-%d')} added to dataset!')
 
         # Back into data's bias to ensure that the bias corrected data doesn't equal to mod data
         temp_masked = template[var].where(mask, drop = True)
@@ -587,16 +587,16 @@ def QDM(obs, hist, mod, var, period = 'future', **kwargs):
             # Expects bias to be xr.DataArray
             is_all_zeros = (bias == 0).all().item() # Returns True if every single value is zero
         else: 
-            logger.error(f'Unexpected type for bias: {type(bias)}')
+            logger.error(f'Unexpected data type for bias: {type(bias)}')
             return None
 
         # Ensure that bias is not all zeros
-        if is_all_zeros: # Triggers if bias_check is set to true
+        if is_all_zeros: # Triggers if set to true (meaning the data is only zeros)
             logger.info(bias)
-            logger.error('Bias corrected data was not successfully applied to dataset.')
+            logger.error('Bias corrected data was not successfully applied to dataset. Data is identical to raw model data.')
             return None
         else:
-            logger.info(f'Bias for {date} successfully corrected and saved to dataset.')
+            logger.info(f'Bias for {date.strftime('%m-%d')} successfully verified and saved to dataset.')
 
         # Close unnecessay datasets
         temp_masked.close()
@@ -651,7 +651,7 @@ if __name__ == '__main__':
     
         # Save data to netCDF file
         debiased_fut.to_netcdf(debiased_fut_path)
-        logger.success(f'Future files saved to: {output_dir}')
+        logger.success(f'Future files saved to: {debiased_fut_path}')
 
     # Close out of unnecessary data
     debiased_fut.close()
@@ -673,7 +673,7 @@ if __name__ == '__main__':
 
         # Save data to netCDF file
         debiased_hist.to_netcdf(debiased_hist_path)
-        logger.success(f'Historical files saved to: {output_dir}')
+        logger.success(f'Historical files saved to: {debiased_hist_path}')
 
     # Close out of data
     debiased_hist.close()
@@ -691,4 +691,3 @@ if __name__ == '__main__':
 
     # Force script to stop running once code is finished
     sys.exit(0)
-
