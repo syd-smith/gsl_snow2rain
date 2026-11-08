@@ -508,6 +508,19 @@ def main(var, domain, WRF_in, MET_in):
 
                 # Set tomorrow as the new today to move on to the next series
                 today = tomorrow
+                
+    # Combine all cleaned WRF files into a single file using context manager
+    with xr.open_mfdataset(
+        glob.glob(str(current_dir / 'daily' / var / '*.nc')), 
+        combine = 'nested', 
+        concat_dim = 'time', 
+        preprocess = fix_time_coord
+        ) as wrf_open:
+
+        # Write file to netcdf
+        wrf_open.sortby('time').to_netcdf(current_dir / 'daily' / f'wrf_raw_GSLBIP_multimodel_ssp245_{var}.nc')
+
+    logger.success(f'WRF files successfully cleaned and saved for {var}!')
 
 # ======================
 # ---- Entry Point ----

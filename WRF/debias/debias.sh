@@ -35,16 +35,6 @@ PYTHON_BIN="/uufs/chpc.utah.edu/common/home/strong-group7/sydney/miniforge3_envs
 # Call python file
 ${PYTHON_BIN} preprocessing.py 
 
-module load cdo
-
-echo "Starting gridMET concatenation for ${variable}..."
-cdo cat gridMET/${variable}/*.nc gridMET/gridMET_GSLBIP_multimodel_ssp245_${variable}.nc
-echo "Concatenation complete!"
-
-echo "Starting raw model concatenation for ${variable}..."
-cdo cat daily/${variable}/*.nc daily/wrf_raw_GSLBIP_multimodel_ssp245_${variable}.nc
-echo "Concatenation complete!"
-
 # Call python file
 ${PYTHON_BIN} qdm_man.py 
 

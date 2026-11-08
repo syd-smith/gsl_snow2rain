@@ -571,7 +571,7 @@ def QDM(obs, hist, mod, var, period = 'future', **kwargs):
         # Plug in debiased data
         mask = (template.time.dt.month == month) & (template.time.dt.day == day)
         template[var].data[mask] = debiased_doy 
-        logger.info(f'Debiased data for {date.strftime('%m-%d')} added to dataset!')
+        logger.info(f'Debiased data for {date.strftime("%m-%d")} added to dataset!')
 
         # Back into data's bias to ensure that the bias corrected data doesn't equal to mod data
         temp_masked = template[var].where(mask, drop = True)
