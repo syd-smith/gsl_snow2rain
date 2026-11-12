@@ -1,4 +1,3 @@
-#%%
 """
 Author: Sydney Smith
 Date Created: August 25, 2026
@@ -31,8 +30,8 @@ sys.path.append(str(parent_dir))
 from old.temporal_chunks import open_or_skip, get_fpaths
 
 sys.path.append(str(current_dir))
-from spatial_chunks import fix_time_coord
-from ecdfm_man import running_window_slice, loc_sel
+from preprocessing import fix_time_coord
+from qdm_man import running_window_slice, loc_sel
 
 # ===================
 # - Set Up Logger - 
@@ -232,7 +231,8 @@ def trend_plt(var, obs, hist, fut, db_hist, db_fut, date, lat, lon, save_name = 
 
     # Opt to save image to sub directory
     if save:
-        save_path = current_dir / 'figures' / f'{save_name}.png'
+        os.makedirs(current_dir / 'figures' / var, exist_ok = True)
+        save_path = current_dir / 'figures' / var / f'{save_name}.png'
         fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Trend plot saved to: {save_path}')
 
@@ -403,8 +403,8 @@ def cdf_plt(var, obs, mod, db_hist, db_fut, dates, lat, lon, save_name, save = T
 
     # Opt to save image to sub directory
     if save:
-        date_str = '_'.join(map(str, dates)) # Pull out items from dates to add to filename
-        save_path = current_dir / 'figures' / save_name
+        os.makedirs(current_dir / 'figures' / var, exist_ok = True)
+        save_path = current_dir / 'figures' / var / save_name
         fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'CDF plot saved to: {save_path}')
 
@@ -594,7 +594,8 @@ def annual_scatter(var, obs, hist, fut, db_hist, db_fut, lat, lon, stats = ['med
     # Opt to save image to sub directory
     if save:
         stat_str = '_'.join(map(str, stats)) # Pull out items from stat to add to filename
-        save_path = current_dir / 'figures' / f'{save_name}.png' # Save using actual lat and lon values used
+        os.makedirs(current_dir / 'figures' / var, exist_ok = True)
+        save_path = current_dir / 'figures' / var / f'{save_name}.png' # Save using actual lat and lon values used
         fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Annual scatter plot saved to: {save_path}')
 
@@ -668,7 +669,8 @@ def bias_scatter(var, raw, debiased, save = False):
 
     # Opt to save image to sub directory
     if save:
-        save_path = current_dir / 'figures' / f'bias_scatter_{var}.png'
+        os.makedirs(current_dir / 'figures' / var, exist_ok = True)
+        save_path = current_dir / 'figures' / var / f'bias_scatter_{var}.png'
         fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Bias scatter plot saved to: {save_path}')
 
@@ -699,7 +701,7 @@ def elevation_data(wrf_output_location):
     
     return data.squeeze()
 
-def min_n_max_bias(var, fut, debiased_fut, save_name = 'min_n_max', save = False):
+def min_n_max_bias(var, fut, debiased_fut, bias_type, save_name = 'min_n_max', save = False):
     """
     2D map of the study region. First panel shows minimum bias at each grid point while second panel shows the 
     maximum. Elevation contours are overlaid on bias data. Note that calculations are only over the future period.
@@ -723,69 +725,40 @@ def min_n_max_bias(var, fut, debiased_fut, save_name = 'min_n_max', save = False
     )
 
     # Initialize plot
-    fig, ax = plt.subplots(1, 2, figsize = (8, 8), subplot_kw = {'projection': wrf_proj})
+    fig, ax = plt.subplots(1, 2, figsize = (16, 9), subplot_kw = {'projection': wrf_proj})
     ax = ax.flatten()
 
     # Check for elevation data output
     ele_path = glob.glob(str(parent_dir / 'wrfout' / 'wrfout*HGT.nc'))
     if not ele_path:
         logger.error('Elevation data not found. Check that elevation_data() saved data to wrfout directory.')
-        return
 
     # Open elevation data
     ele_ds = xr.open_dataset(ele_path[0])
 
-    for year in range(1985, 2100):
-        logger.info(f'Calculating extremes for {year}.')
-        # Isolate one year of data at a time
-        raw_yr = fut.sel(time = slice(f'{year}-01-01', f'{year}-12-31'))
-        debiased_yr = debiased_fut.sel(time = slice(f'{year}-01-01', f'{year}-12-31'))
+    # Calculate first the bias of the dataset then the min and max bias
+    if bias_type == 'multiplicative':
+        bias = fut / debiased_fut
+    else:
+        bias = fut - debiased_fut
 
-        # Calculate the bias and take the min and max
-        bias = raw_yr - debiased_yr
-        bias_min = bias.min(dim = 'time')
-        bias_max = bias.max(dim = 'time')
-        logger.info(f'Min for {year}: {bias_min[var]}')
-        logger.info(f'Max for {year}: {bias_max[var]}')
-
-        if year == 1985:
-            # Skip combining the first year of data (there's nothing to combine it with)
-            min_all = bias_min
-            max_all = bias_max
-
-        else:
-            # Combine datasets together on a new dim
-            min_concat = xr.concat([min_all, bias_min], dim = 'year')
-            max_concat = xr.concat([max_all, bias_max], dim = 'year')
-
-            # Take the min of the new combined dataset (this will cause the values that are not most extreme to be left behind)
-            min_all = min_concat.min(dim = 'year')
-            max_all = max_concat.max(dim = 'year')
-
-        logger.info(f'Overall min: {min_all[var]}')
-        logger.info(f'Overall max: {max_all[var]}')
-
-        # Close out of that years worth of data
-        bias_min.close()
-        bias_max.close()
-
-    # Log once calculations are complete
-    logger.info('Min and max calculations complete! Starting plotting.')
+    min_all = bias.min(dim = 'time')
+    max_all = bias.max(dim = 'time')
 
     # Pull out lat and lon values
-    lons = min_all['lon'].values
-    lats = min_all['lat'].values
+    lons = fut['lon'].values[0]
+    lats = fut['lat'].values[0]
 
     # Plot data
-    min_plot = ax[0].pcolormesh(
+    min_plot = ax[0].contourf(
         lons, lats,
         min_all[var].values,
         transform = wrf_proj, 
-        cmap = cmap('GMT_ocean', revBool = True),
+        cmap = cmap('MPL_GnBu', revBool = True),
         shading = 'nearest'
     )
 
-    max_plot = ax[1].pcolormesh(
+    max_plot = ax[1].contourf(
         lons, lats, 
         max_all[var].values,
         transform = wrf_proj,
@@ -794,37 +767,33 @@ def min_n_max_bias(var, fut, debiased_fut, save_name = 'min_n_max', save = False
         )
 
     # Add colorbars
-    fig.colorbar(min_plot, ax = ax[0], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})', shrink = 0.7)
-    fig.colorbar(max_plot, ax = ax[1], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})', shrink = 0.7)
+    fig.colorbar(min_plot, ax = ax[0], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})', shrink = 0.5)
+    fig.colorbar(max_plot, ax = ax[1], orientation = 'vertical', pad = 0.05, label = f'{var} ({units[var]})', shrink = 0.5)
 
-    # Add lakes to maps
-    lakes = cfeature.NaturalEarthFeature(category = 'physical', name = 'lakes', scale = '50m', facecolor = 'none', edgecolor = 'k')
-    ax[0].add_feature(lakes, linewidth = 1.5)
-    ax[1].add_feature(lakes, linewidth = 1.5)
+    for i, letter in zip([0,1], ['a.', 'b.']):
+        # Add elevation contour lines   
+        ele_data = ax[i].contour(lons,
+                        lats, 
+                        ele_ds['HGT'].values, 
+                        levels = [1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000], 
+                        colors = 'k', 
+                        linewidths = 0.5, 
+                        transform = wrf_proj)
+        ax[i].clabel(ele_data, inline = True, fmt = '%1.0f', fontsize = 5)
 
-    # Add letter labels to sub plots
-    ax[0].text(0.02, 0.88, 'a.', fontsize = 10, transform = ax[0].transAxes)
-    ax[1].text(0.02, 0.88, 'b.', fontsize = 10, transform = ax[1].transAxes)
-
-    # Add elevation contour lines
-    ele_data = ax[0].contour(lons,
-                    lats, 
-                    ele_ds['HGT'].values, 
-                    levels = [1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000], 
-                    colors = 'k', 
-                    linewidths = 0.5, 
-                    transform = wrf_proj)
-    i.clabel(ele_data, inline = True, fmt = '%1.0f', fontsize = 5)
+        # Add letter labels to sub plots
+        ax[i].text(0.02, 0.93, letter, fontsize = 20, transform = ax[i].transAxes)
 
     logger.success('Plots completed!')
 
     # Opt to save image to sub directory
     if save:
-        save_path = current_dir / 'figures' / f'{save_name}.png'
+        os.makedirs(current_dir / 'figures' / var, exist_ok = True)
+        save_path = current_dir / 'figures' / var / f'{save_name}.png'
         fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Bias map saved to: {save_path}')
 
-def seasonal_bias(var, fut, debiased_fut, save_name = f'seasonal_bias', save = False):
+def seasonal_bias(var, fut, debiased_fut, bias_type, save_name = f'seasonal_bias', save = False):
     """
     Creates a map of averaged monthly biases. Each subplot corresponds with a season.
     """
@@ -846,36 +815,41 @@ def seasonal_bias(var, fut, debiased_fut, save_name = f'seasonal_bias', save = F
     )
 
     # Initialize plot
-    fig, ax = plt.subplots(2, 2, figsize = (8, 8), subplot_kw = {'projection': wrf_proj})
+    fig, ax = plt.subplots(2, 2, figsize = (14, 11), subplot_kw = {'projection': wrf_proj})
     axes = ax.flatten()
 
     # Check for elevation data output
     ele_path = glob.glob(str(parent_dir / 'wrfout' / 'wrfout*HGT.nc'))
     if not ele_path:
         logger.error('Elevation data not found. Check that elevation_data() saved data to wrfout directory.')
-        return
 
     # Open elevation data
     ele_ds = xr.open_dataset(ele_path[0])
 
     # Calculate the bias
-    bias = fut - debiased_fut
+    if bias_type == 'multiplicative':
+            bias = fut / debiased_fut
+    else:
+        bias = fut - debiased_fut
+
     logger.info(bias)
     logger.info(f'Initial bias calculations complete for {var}.')
 
     # Create list of months to show in plots
     months = [1, 4, 7, 10]
     labels = ['a.', 'b.', 'c.', 'd.']
-    
+
     for i, month, label in zip(axes, months, labels):
         # Select month from the dataset
         month_sel = bias.sel(time = (bias.time.dt.month == month))
 
         # Take monthly average
         month_avg = month_sel.mean(dim = 'time')
+        # When you take the mean it drops the other coords where lat and lon values are stored
+        # Use lat and lon values from month_sel instead
 
-        avg_plt = i.pcolormesh(month_avg[var].lon,
-                        month_avg[var].lat, 
+        avg_plt = i.pcolormesh(month_sel['tmmn'].lon.values[0],
+                        month_sel['tmmn'].lat.values[0], 
                         month_avg[var].values,
                         shading = 'nearest',
                         cmap = cmap('MPL_coolwarm'),
@@ -890,8 +864,8 @@ def seasonal_bias(var, fut, debiased_fut, save_name = f'seasonal_bias', save = F
         i.add_feature(lakes, linewidth = 1.5)
 
         # Add elevation contour lines
-        ele_data = i.contour(month_avg[var].lon,
-                        month_avg[var].lat, 
+        ele_data = i.contour(month_sel['tmmn'].lon.values[0],
+                        month_sel['tmmn'].lat.values[0], 
                         ele_ds['HGT'].values, 
                         levels = [1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000], 
                         colors = 'k', 
@@ -904,13 +878,14 @@ def seasonal_bias(var, fut, debiased_fut, save_name = f'seasonal_bias', save = F
 
     # Opt to save image to sub directory
     if save:
-        save_path = current_dir / 'figures' / f'{save_name}.png'
+        os.makedirs(current_dir / 'figures' / var, exist_ok = True)
+        save_path = current_dir / 'figures' / var / f'{save_name}.png'
         fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Seasonal bias map saved to: {save_path}')
 
 # Catch silent errors and report to log file
 @logger.catch 
-def main(var, wrf_output_location, elevation = False):
+def main(var, bias_type, wrf_output_location, elevation = False):
 
     if elevation:
         ele_save = elevation_data(wrf_output_location)
@@ -926,39 +901,43 @@ def main(var, wrf_output_location, elevation = False):
     hist = mod.sel(time = slice('1985-01-01', '2014-12-31'))
     fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
 
-    debiased_hist_path = glob.glob(str(parent_dir / 'wrfout_window_fix' / 'debiased_hist_tmmx.nc'))
+    debiased_hist_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*1985-2014.nc'))
     debiased_hist = xr.open_dataset(debiased_hist_path[0], decode_times = True)
 
-    debiased_fut_path = glob.glob(str(parent_dir / 'wrfout_window_fix' / 'debiased_fut_tmmx.nc'))
+    debiased_fut_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*2015-2099.nc'))
     debiased_fut = xr.open_dataset(debiased_fut_path[0], decode_times = True)
 
     # SLC airport coordinates
     # lat = 40.788
     # lon = -111.978
+    # place = 'slc_airport'
 
     # Alta coordinates
     # lat = 40.58083
     # lon = -111.63722
+    # place = 'alta'
 
     # Ogden coordinates
     # lat = 41.2228
     # lon = -111.9733
+    # place = 'ogden'
 
     # Park city coordinates
     # lat = 40.646061
     # lon = -111.49797
+    # place = 'park_city'
 
     # Provo coordinates
     lat = 40.233845
     lon = -111.658531
+    place = 'provo'
 
     # Plot selections
-    # scatter = annual_scatter(var, obs, hist, fut, debiased_hist, debiased_fut, lat, lon, stats = ['median', 0.95, 0.5], save_name = f'annual_scatter_provo_{var}', save = True) 
-    # trend = trend_plt(var, obs, hist, fut, debiased_hist, debiased_fut, '1985-03-05', lat, lon, save_name = f'trend_plot_provo_{var}', save = True)
-    # cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['2070-01-15', '2070-04-15', '2070-07-15', '2070-10-15'], lat = lat, lon = lon, save_name = f'cdf_provo_{var}',save = True) 
-    # seasonal = seasonal_bias(var, fut, debiased_fut, save_name = f'seasonal_bias_{var}', save = True)
-    # TODO: debug from 2026-11-03_17-33-21.log
-    bias_map = min_n_max_bias(var, fut, debiased_fut, save_name = f'min_n_max_{var}', save = True) # OOM kill (chunking didn't work might need to try mannual chunking)
+    scatter = annual_scatter(var, obs, hist, fut, debiased_hist, debiased_fut, lat, lon, stats = ['median', 0.95, 0.5], save_name = f'annual_scatter_{place}_{var}', save = True) 
+    trend = trend_plt(var, obs, hist, fut, debiased_hist, debiased_fut, '1985-03-05', lat, lon, save_name = f'trend_plot_{place}_{var}', save = True)
+    cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['2070-01-15', '2070-04-15', '2070-07-15', '2070-10-15'], lat = lat, lon = lon, save_name = f'cdf_{place}_{var}',save = True) 
+    seasonal = seasonal_bias(var, fut, debiased_fut, bias_type, save_name = f'seasonal_bias_{var}', save = True)
+    bias_map = min_n_max_bias(var, fut, debiased_fut, bias_type, save_name = f'min_n_max_{var}', save = True) 
     # bias = bias_scatter(var, raw, debiased, save = True)
 
 # ======================
@@ -973,7 +952,8 @@ if __name__ == '__main__':
 
     # Only inputs required
     main(
-        var = 'tmmx', 
+        var = 'srad', 
+        bias_type = 'additive',
         wrf_output_location = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014'
     )
 

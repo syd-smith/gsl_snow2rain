@@ -1,3 +1,4 @@
+#%%
 """
 Author: Sydney Smith
 Date Created: September 29, 2026
@@ -370,34 +371,31 @@ def dry_day_adjustment(hist, fut, dd_thresh):
     being above the dry day threshold and dry is defined as being below the threshold.
     """
 
-    # Create placeholder array for future offset values
-    fut_offset = np.full(fut.shape, np.nan)
-
     # Handling if both historical and future are dry -> set offset ratio to 1 (no change)
     dry_cond = (hist <= dd_thresh) & (fut <= dd_thresh)
-    fut_offset = np.where(np.logical_not(dry_cond), fut, 1.0) # use np.logical_not to search for values that meet the given condition
+    fut_offset = np.where(dry_cond, 1.0, 0)
 
     # Handling if histroical is dry and future is wet -> use dd_thresh in denomenator to avoid divide by zero errors
     dry_wet_cond = (hist <= dd_thresh) & (fut > dd_thresh)
-    fut_offset = np.where(np.logical_not(dry_wet_cond), fut, fut/dd_thresh)
+    fut_offset = np.where(dry_wet_cond, fut/dd_thresh, fut_offset)
 
     # Handling if both historical and future are wet -> expected case (fut/hist)
     wet_cond = (hist > dd_thresh) & (fut > dd_thresh)
-    fut_offset = np.where(np.logical_not(wet_cond), fut, fut/hist)
+    fut_offset = np.where(wet_cond, fut/hist, fut_offset)
 
     # Handling if historical is wet and future is dry -> use dd_thresh in numerator to avoid setting precip to zero
     wet_dry_cond = (hist > dd_thresh) & (fut <= dd_thresh)
-    fut_offset = np.where(np.logical_not(wet_dry_cond), fut, dd_thresh/hist)
+    fut_offset = np.where(wet_dry_cond, dd_thresh/hist, fut_offset)
 
     # Bound offset ratios to be no greater than 5.0
     # Where fut_offset is less than or equal to 5 leave fut value else replace value with 5
-    fut_offset_bounded = np.where(fut_offset <= 5, fut, 5.0)
+    fut_offset_bounded = np.where(fut_offset <= 5, fut_offset, 5.0)
 
     # Log change in data
     logger.info('fut_offset before dry day adjustment was applied:')
     logger.info(fut)
     logger.info('fut_offset after dry day adjustment was applied:')
-    logger.info(fut_offset)
+    logger.info(fut_offset_bounded)
 
     return fut_offset_bounded
 
@@ -535,17 +533,27 @@ def QDM(obs, hist, mod, var, period = 'future', **kwargs):
         # Check that variable bounds are within a physically reasonable limit
         if var == 'pr':
             # Replace negative precipitation values with zeros
-            pr_cond = (debiased_doy < 0)
-            debiased_doy = np.where(np.logical_not(pr_cond), debiased_doy, 0) # Use np.logical_not to filter for where condition is met
+            pr_cond = (debiased_doy >= 0)
+            debiased_doy = np.where(pr_cond, debiased_doy, 0)
+
+            # Trigger assertion error if negative precip values still exist
+            assert np.all(debiased_doy >= 0)
+            logger.success('Negative precipitation values removed!')
+            logger.info(debiased_doy)
 
         elif var == 'sph':
             # Bound lower limit of specific humidity to zero
-            min_cond = (debiased_doy < 0)
-            debiased_doy = np.where(np.logical_not(min_cond), debiased_doy, 0)
+            min_cond = (debiased_doy >= 0)
+            debiased_doy = np.where(min_cond, debiased_doy, 0)  
 
             # Bound upper limit of specific humidity to 1 kg kg-1 or 100% pure water
-            max_cond = (debiased_doy > 1.0)
-            debiased_doy = np.where(np.logical_not(max_cond), debiased_doy, 1.0)
+            max_cond = (debiased_doy <= 1.0)
+            debiased_doy = np.where(max_cond, debiased_doy, 1.0)
+
+            # Trigger assertion error if boundary conditions are violated
+            assert np.all((debiased_doy >= 0) & (debiased_doy <= 1.0))
+            logger.success('Specific humidity values successfully bounded!')
+            logger.info(debiased_doy)
 
         elif var == 'srad':
             # Pull lat and lon values from model data
@@ -559,7 +567,7 @@ def QDM(obs, hist, mod, var, period = 'future', **kwargs):
 
             # Broadcast 2D array of min and max values to a 3D array to match debiased_doy 
             # Note: min and max values should be the same across the time dimension because DOY is the same while the year itself changes
-            time_len = debiased_doy.shape[0]
+            time_len = debiased_doy.shape[0] # Broadcast min and max array across 85 year time dim (85 years of the same doy)
             logger.info(f'Time length: {time_len}')
             min_expanded = np.broadcast_to(min_vals, (time_len, *min_vals.shape))
             logger.info(f'Min expanded shape: {min_expanded.shape}')
@@ -568,10 +576,16 @@ def QDM(obs, hist, mod, var, period = 'future', **kwargs):
 
             # Mask debiased_doy for min and max values
             min_cond = (debiased_doy > min_expanded)
-            debiased_doy = np.where(np.logical_not(min_cond), debiased_doy, min_expanded)
-            max_cond = (debiased_doy > max_expanded)
-            debiased_doy = np.where(np.logical_not(max_cond), debiased_doy, max_expanded)
+            debiased_doy = np.where(min_cond, debiased_doy, min_expanded)
 
+            max_cond = (debiased_doy < max_expanded)
+            debiased_doy = np.where(max_cond, debiased_doy, max_expanded)
+
+            # Trigger assertion error if boundary conditions are violated
+            assert np.all((debiased_doy >= min_expanded) & (debiased_doy <= max_expanded))
+            logger.success('Short wave radiation values successfully bounded!')
+            logger.info(debiased_doy)
+            
         # Pull month and day from date
         day = int(date.strftime('%d'))
         month = int(date.strftime('%m'))
@@ -604,7 +618,7 @@ def QDM(obs, hist, mod, var, period = 'future', **kwargs):
             logger.error('Bias corrected data was not successfully applied to dataset. Data is identical to raw model data.')
             return None
         else:
-            logger.info(f'Bias for {date.strftime('%m-%d')} successfully verified and saved to dataset.')
+            logger.info(f'Bias for {date.strftime("%m-%d")} successfully verified and saved to dataset.')
 
         # Close unnecessay datasets
         temp_masked.close()
