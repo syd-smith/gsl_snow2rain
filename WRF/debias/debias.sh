@@ -27,13 +27,13 @@ export MET_in="/uufs/chpc.utah.edu/common/home/strong-group7/savanna/maca/gridme
 export save=True
 export bias_type="multiplicative" # Options are "multiplicative" and "additive" but only pr and sph are "multipicative"
 export day_running_window=31 # 15 days on either side of the date in question (matches MACA's 15 day semi window)
-export dry_day_threshold=6.6e-5 # PR:0.254 mm & SPH:6.6e-5 kg kg-1
+export dry_day_threshold=6.6e-5 # PR:0.254 mm (0.01 in) & SPH:6.6e-5 kg kg-1
 
 # Point to python bin in olympics
 PYTHON_BIN="/uufs/chpc.utah.edu/common/home/strong-group7/sydney/miniforge3_envs/debias_env/bin/python"
 
-# # Call python file
-# ${PYTHON_BIN} preprocessing.py 
+# Call python file
+${PYTHON_BIN} preprocessing.py 
 
 # Call python file
 ${PYTHON_BIN} qdm_man.py 

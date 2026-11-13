@@ -1,3 +1,4 @@
+#%%
 """
 Author: Sydney Smith
 Date Created: August 25, 2026
@@ -293,12 +294,12 @@ def cdf_plt(var, obs, mod, db_hist, db_fut, dates, lat, lon, save_name, save = T
     # Adjust plot size to number of dates passed
     if len(dates) > 3:
         # Make additional rows if stats list is too long
-        fig, ax = plt.subplots(int(len(dates)/2), math.ceil(len(dates)/2), figsize = (12, 6)) # Round up the number of columns needed to the nearest whole number
+        fig, ax = plt.subplots(int(len(dates)/2), math.ceil(len(dates)/2), figsize = (10, 10)) # Round up the number of columns needed to the nearest whole number
         ax = ax.flatten() # Flatten the axes array to make it easier to iterate over
     
     # Keep figure to one row if dates list is 3 items or less
     else:
-        fig, ax = plt.subplots(1, len(dates), figsize = (12, 6))
+        fig, ax = plt.subplots(1, len(dates), figsize = (10, 10))
 
     # Slice dataset to a specific location
     obs_sel = loc_sel(obs, var, lat, lon)
@@ -306,7 +307,10 @@ def cdf_plt(var, obs, mod, db_hist, db_fut, dates, lat, lon, save_name, save = T
     db_hist_sel = loc_sel(db_hist, var, lat, lon)
     db_fut_sel = loc_sel(db_fut, var, lat, lon)
 
-    for i, date in enumerate(dates):
+    # List of plot labels
+    labels = ['a.', 'b.', 'c.', 'd.']
+
+    for (i, date), label in zip(enumerate(dates), labels):
         # Convert date to pd.to_datetime
         date = pd.to_datetime(date)
 
@@ -388,7 +392,7 @@ def cdf_plt(var, obs, mod, db_hist, db_fut, dates, lat, lon, save_name, save = T
         )
 
         # Adjust plot format settings for each subplot
-        ax[i].set_title(date)
+        ax[i].text(15, 0.02, label, fontsize = 20)
         ax[i].set_ylabel('Percentile')
         ax[i].set_xlabel(f'{var} ({units[var]})')
         ax[i].grid(True, linestyle = '--', alpha = 0.5)
@@ -848,8 +852,8 @@ def seasonal_bias(var, fut, debiased_fut, bias_type, save_name = f'seasonal_bias
         # When you take the mean it drops the other coords where lat and lon values are stored
         # Use lat and lon values from month_sel instead
 
-        avg_plt = i.pcolormesh(month_sel['tmmn'].lon.values[0],
-                        month_sel['tmmn'].lat.values[0], 
+        avg_plt = i.pcolormesh(month_sel[var].lon.values[0],
+                        month_sel[var].lat.values[0], 
                         month_avg[var].values,
                         shading = 'nearest',
                         cmap = cmap('MPL_coolwarm'),
@@ -864,8 +868,8 @@ def seasonal_bias(var, fut, debiased_fut, bias_type, save_name = f'seasonal_bias
         i.add_feature(lakes, linewidth = 1.5)
 
         # Add elevation contour lines
-        ele_data = i.contour(month_sel['tmmn'].lon.values[0],
-                        month_sel['tmmn'].lat.values[0], 
+        ele_data = i.contour(month_sel[var].lon.values[0],
+                        month_sel[var].lat.values[0], 
                         ele_ds['HGT'].values, 
                         levels = [1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000], 
                         colors = 'k', 
@@ -908,9 +912,9 @@ def main(var, bias_type, wrf_output_location, elevation = False):
     debiased_fut = xr.open_dataset(debiased_fut_path[0], decode_times = True)
 
     # SLC airport coordinates
-    # lat = 40.788
-    # lon = -111.978
-    # place = 'slc_airport'
+    lat = 40.788
+    lon = -111.978
+    place = 'slc_airport'
 
     # Alta coordinates
     # lat = 40.58083
@@ -928,16 +932,16 @@ def main(var, bias_type, wrf_output_location, elevation = False):
     # place = 'park_city'
 
     # Provo coordinates
-    lat = 40.233845
-    lon = -111.658531
-    place = 'provo'
+    # lat = 40.233845
+    # lon = -111.658531
+    # place = 'provo'
 
     # Plot selections
-    scatter = annual_scatter(var, obs, hist, fut, debiased_hist, debiased_fut, lat, lon, stats = ['median', 0.95, 0.5], save_name = f'annual_scatter_{place}_{var}', save = True) 
-    trend = trend_plt(var, obs, hist, fut, debiased_hist, debiased_fut, '1985-03-05', lat, lon, save_name = f'trend_plot_{place}_{var}', save = True)
+    # scatter = annual_scatter(var, obs, hist, fut, debiased_hist, debiased_fut, lat, lon, stats = ['median', 0.95, 0.5], save_name = f'annual_scatter_{place}_{var}', save = True) 
+    # trend = trend_plt(var, obs, hist, fut, debiased_hist, debiased_fut, '1985-03-05', lat, lon, save_name = f'trend_plot_{place}_{var}', save = True)
     cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['2070-01-15', '2070-04-15', '2070-07-15', '2070-10-15'], lat = lat, lon = lon, save_name = f'cdf_{place}_{var}',save = True) 
-    seasonal = seasonal_bias(var, fut, debiased_fut, bias_type, save_name = f'seasonal_bias_{var}', save = True)
-    bias_map = min_n_max_bias(var, fut, debiased_fut, bias_type, save_name = f'min_n_max_{var}', save = True) 
+    # seasonal = seasonal_bias(var, fut, debiased_fut, bias_type, save_name = f'seasonal_bias_{var}', save = True)
+    # bias_map = min_n_max_bias(var, fut, debiased_fut, bias_type, save_name = f'min_n_max_{var}', save = True) 
     # bias = bias_scatter(var, raw, debiased, save = True)
 
 # ======================
@@ -952,12 +956,13 @@ if __name__ == '__main__':
 
     # Only inputs required
     main(
-        var = 'srad', 
-        bias_type = 'additive',
+        var = 'pr', 
+        bias_type = 'multiplicative',
         wrf_output_location = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014'
     )
 
     # Report of runtime at completion 
     logger.success(f'Debiasing process completed!')
     logger.info(f'Total runtime: {time.perf_counter() - start:.4f}s')
+
 

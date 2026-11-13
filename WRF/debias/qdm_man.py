@@ -373,7 +373,7 @@ def dry_day_adjustment(hist, fut, dd_thresh):
 
     # Handling if both historical and future are dry -> set offset ratio to 1 (no change)
     dry_cond = (hist <= dd_thresh) & (fut <= dd_thresh)
-    fut_offset = np.where(dry_cond, 1.0, 0)
+    fut_offset = np.where(dry_cond, 1.0, np.nan) 
 
     # Handling if histroical is dry and future is wet -> use dd_thresh in denomenator to avoid divide by zero errors
     dry_wet_cond = (hist <= dd_thresh) & (fut > dd_thresh)
@@ -386,6 +386,11 @@ def dry_day_adjustment(hist, fut, dd_thresh):
     # Handling if historical is wet and future is dry -> use dd_thresh in numerator to avoid setting precip to zero
     wet_dry_cond = (hist > dd_thresh) & (fut <= dd_thresh)
     fut_offset = np.where(wet_dry_cond, dd_thresh/hist, fut_offset)
+
+    # Ensure an offset value was applied to every data point
+    if np.isnan(fut_offset).any():
+        logger.error(f'NaNs in fut_offset: {float(np.isnan(fut_offset).sum())}')
+        return None
 
     # Bound offset ratios to be no greater than 5.0
     # Where fut_offset is less than or equal to 5 leave fut value else replace value with 5
@@ -421,9 +426,9 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, bias_type, dry_day_thres
     logger.info('Datasets sliced into running windows.')
 
     # Use to check that means from the window slices are different for each date used
-    logger.info(f"Date: {date.strftime('%Y-%m-%d')} | Obs Mean: {obs_sliced.mean().values}")
-    logger.info(f"Date: {date.strftime('%Y-%m-%d')} | Hist Mean: {hist_sliced.mean().values}")
-    logger.info(f"Date: {date.strftime('%Y-%m-%d')} | Mod Mean: {mod_sliced.mean().values}")
+    logger.info(f"Date: {date.strftime('%Y-%m-%d')} | Obs Mean: {obs_sliced[var].mean().values}")
+    logger.info(f"Date: {date.strftime('%Y-%m-%d')} | Hist Mean: {hist_sliced[var].mean().values}")
+    logger.info(f"Date: {date.strftime('%Y-%m-%d')} | Mod Mean: {mod_sliced[var].mean().values}")
     
     # End function if NaNs are present in the source data
     if obs_sliced[var].isnull().any() or hist_sliced[var].isnull().any() or mod_sliced[var].isnull().any():

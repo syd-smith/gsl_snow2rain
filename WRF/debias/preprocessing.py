@@ -381,11 +381,23 @@ def WRF_daily(today, tomorrow, files, var, domain, current_dir):
         # Find daily average
         daily_avg = time_clean_ds[var].mean(dim = 'time')
         
-        # Convert Q2 to specific humidity
+        # Convert Q2 (mixing ratio) to specific humidity
         adj_data = daily_avg / (1 + daily_avg)
 
         # Expand time dim back out after it was collapsed
         daily_data = adj_data.expand_dims('time')
+
+        # ADD EXTRA BOUNDING CHECK AFTER CALCULATIONS
+        # Bound lower limit of specific humidity to zero
+        daily_data = xr.where(daily_data >= 0, daily_data, 0)  
+
+        # Bound upper limit of specific humidity to 1 kg kg-1 or 100% pure water
+        daily_data = xr.where(daily_data <= 1.0, daily_data, 1.0)
+
+        # Trigger assertion error if boundary conditions are violated
+        assert daily_data.min() >= 0 and daily_data.max() <= 1.0
+        logger.success('Specific humidity values successfully bounded!')
+        logger.info(daily_data)
 
     else:
         # Calculate daily average
