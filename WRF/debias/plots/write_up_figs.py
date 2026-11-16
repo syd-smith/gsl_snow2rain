@@ -31,7 +31,7 @@ from preprocessing import fix_time_coord
 from qdm_man import running_window_slice, loc_sel
 
 sys.path.append(str(current_dir))
-from validation import best_fit, cdf_masked
+from validation import best_fit, cdf_masked, calc_stat
 
 # ===================
 # - Set Up Logger - 
@@ -128,7 +128,7 @@ def db_process_map(save_name = 'db_process_map', save = False):
     )
 
     # Initialize plot
-    fig, ax = plt.subplots(1, 3, figsize = (18, 6), subplot_kw = {'projection': wrf_proj})
+    fig, ax = plt.subplots(1, 3, figsize = (15, 6), subplot_kw = {'projection': wrf_proj})
     axes = ax.flatten()
 
     # Check for elevation data output
@@ -140,38 +140,40 @@ def db_process_map(save_name = 'db_process_map', save = False):
     ele_ds = xr.open_dataset(ele_path[0])
 
     # Average model data
-    fut_mean = fut.sel(time = fut.time.dt.month == 4).mean(dim = 'time')
-    debiased_fut_mean = debiased_fut.sel(time = debiased_fut.time.dt.month == 4).mean(dim = 'time')
+    fut_mean = hist.sel(time = (hist.time.dt.month == 6) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
+    debiased_fut_mean = debiased_hist.sel(time = (hist.time.dt.month == 6) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
 
     # Normalize colorbar for raw and debiased model data
-    mod_norm = mcolors.TwoSlopeNorm(vmin = 245, vmax = 315, vcenter = 280)
+    mod_norm = mcolors.TwoSlopeNorm(vmin = 280, vmax = 310, vcenter = 295)
 
     # Plot raw model data
-    mod_map = axes[0].pcolormesh(fut_mean['tmmx'].lon.values,
+    mod_map = axes[0].contourf(fut_mean['tmmx'].lon.values,
                             fut_mean['tmmx'].lat.values, 
                             fut_mean['tmmx'].values,
                             shading = 'nearest',
-                            cmap = cmap('MPL_RdYlBu', revBool = True),
-                            transform = wrf_proj # Tells cartopy lat/lon values are in degrees
+                            cmap = cmap('MPL_afmhot', revBool = True),
+                            transform = wrf_proj, # Tells cartopy lat/lon values are in degrees
+                            norm = mod_norm
             )
 
     # Plot debiased model data
-    db_map = axes[1].pcolormesh(debiased_fut_mean['tmmx'].lon.values,
+    db_map = axes[1].contourf(debiased_fut_mean['tmmx'].lon.values,
                                 debiased_fut_mean['tmmx'].lat.values, 
                                 debiased_fut_mean['tmmx'].values,
                                 shading = 'nearest',
-                                cmap = cmap('MPL_RdYlBu', revBool = True),
-                                transform = wrf_proj # Tells cartopy lat/lon values are in degrees
+                                cmap = cmap('MPL_afmhot', revBool = True),
+                                transform = wrf_proj, # Tells cartopy lat/lon values are in degrees
+                                norm = mod_norm
                 )
 
     # Add colorbar for model data on the left side of plots
-    mod_ax = fig.add_axes([0.05, 0.95, 0.6, 0.03])
+    mod_ax = fig.add_axes([0.05, 0.17, 0.02, 0.65])
     fig.colorbar(db_map,
                 cax = mod_ax, 
                 norm = mod_norm, 
                 orientation = 'vertical', 
                 label = f'tmmx ({units["tmmx"]})', 
-                ticks = [245, 255, 265, 275, 285, 295, 305, 315], 
+                ticks = [280, 285, 290, 295, 300, 305, 310],
                 shrink = 0.65, 
                 pad = 0.05
                 )
@@ -182,23 +184,24 @@ def db_process_map(save_name = 'db_process_map', save = False):
     logger.info('Initial bias calculations complete for tmmx.')
 
     # Plot bias data
-    anom_norm = mcolors.TwoSlopeNorm(vmin = -2, vcenter = 0, vmax = 8)
-    anom_map = axes[2].pcolormesh(bias['tmmx'].lon.values,
+    anom_norm = mcolors.TwoSlopeNorm(vmin = -8, vcenter = 0, vmax = 8)
+    anom_map = axes[2].contourf(bias['tmmx'].lon.values,
                                 bias['tmmx'].lat.values, 
                                 bias['tmmx'].values,
                                 shading = 'nearest',
                                 cmap = cmap('BlueWhiteOrangeRed'),
-                                transform = wrf_proj # Tells cartopy lat/lon values are in degrees
+                                transform = wrf_proj, # Tells cartopy lat/lon values are in degrees
+                                norm = anom_norm
                 )
 
     # Add a colorbar centered on zero
-    anom_ax = fig.add_axes([0.95, 0.95, 0.6, 0.03])
+    anom_ax = fig.add_axes([0.92, 0.17, 0.02, 0.65])
     fig.colorbar(anom_map, 
                 cax = anom_ax,
                 norm = anom_norm, 
                 orientation = 'vertical', 
                 label = f'tmmx bias ({units["tmmx"]})', 
-                ticks = [-2, -1, 0, 2, 4, 6, 8], 
+                ticks = [-8, -6, -4, -2, 0, 2, 4, 6, 8],
                 shrink = 0.65, 
                 pad = 0.05
                 )
@@ -208,7 +211,7 @@ def db_process_map(save_name = 'db_process_map', save = False):
 
     for ax, label in zip(axes, labels):
         # Restict panel size to accomodate for curve in grid creating white space
-        ax.set_extent([-114.2, -109.95, 39.22, 43.17], crs = wrf_proj)
+        # ax.set_extent([1, 88, 1, 109], crs = wrf_proj)
 
         # Add elevation contour lines
         ele_data = ax.contour(fut_mean['tmmx'].lon.values,
@@ -221,7 +224,7 @@ def db_process_map(save_name = 'db_process_map', save = False):
         ax.clabel(ele_data, inline = True, fmt = '%1.0f', fontsize = 6)
 
         # Add letter labels to sub plots
-        ax.text(0.02, 0.91, label, fontsize = 20, transform = ax.transAxes)
+        ax.text(0.02, 0.94, label, fontsize = 20, transform = ax.transAxes)
 
     # # Adjust subplot spacing
     # fig.subplots_adjust(hspace = 0.01, wspace = 0.05, bottom = 0.10, top = 0.95, left = 0.05, right = 0.95)
@@ -391,7 +394,7 @@ def cdf_plt(save_name, save = True):
     ax = ax.flatten() # Flatten the axes array to make it easier to iterate over
 
     # Set date of interest to June 15
-    date = pd.to_datetime('1988-07-15')
+    date = pd.to_datetime('1988-06-15')
 
     # SLC airport coordinates
     lat = 40.788
@@ -509,6 +512,167 @@ def cdf_plt(save_name, save = True):
         logger.success(f'CDF plot saved to: {save_path}')
 
 # sph annual scatter plot
+def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = False): 
+    """
+    Create a scatter plot showing the annual cycle of given data over the entire spatial region based on that stat argument passed.
+    """
+    import math
+
+    # Open datasets
+    obs, hist, fut, db_hist, db_fut = open_datasets('sph', mod_sep = True)
+
+    # SLC airport coordinates
+    lat = 40.788
+    lon = -111.978
+
+    # Adjust plot size to number of stats passed
+    fig, ax = plt.subplots(1, 3, figsize = (12, 6)) # Round up the number of columns needed to the nearest whole number
+    ax = ax.flatten() # Flatten the axes array to make it easier to iterate over
+
+    logger.info(f'Obs dataset type: {type(obs)}')
+    # Slice dataset to a specific location
+    obs_sel = loc_sel(obs, 'sph', lat, lon)
+    hist_sel = loc_sel(hist, 'sph', lat, lon)
+    fut_sel = loc_sel(fut, 'sph', lat, lon)
+    db_hist_sel = loc_sel(db_hist, 'sph', lat, lon)
+    db_fut_sel = loc_sel(db_fut, 'sph', lat, lon)
+    logger.info(f'Obs dataset type after location selection {type(obs_sel)}')
+
+    # Create list of dates
+    dates = pd.date_range(start = '1985-01-01', end = '1985-12-31', freq = 'D') 
+
+    # Create a dictionary to hold a list for each stat
+    stat_results = {
+        stat: {
+            'obs': [],
+            'raw_hist': [],
+            'raw_fut': [],
+            'debiased_hist': [],
+            'debiased_fut': []
+        } 
+        for stat in stats
+        } # Dynamically stores data based on whats in stats
+    logger.info('Stats dictionary created!')
+
+    for day in dates:
+        # Turn day in to usable date string 
+        date = day.strftime('%Y-%m-%d')
+        logger.info(f'Starting calculations for {date}')
+
+        # Slice dataset down to a given window size centered on date
+        # Default window size is 31 days
+        obs_window = running_window_slice(obs_sel, date)
+        hist_window = running_window_slice(hist_sel, date)
+        fut_window = running_window_slice(fut_sel, date)
+        db_hist_window = running_window_slice(db_hist_sel, date)
+        db_fut_window = running_window_slice(db_fut_sel, date)
+
+        for stat in stats:
+            # Calculate the given stat for the sliced dataset
+            obs_stat = calc_stat(obs_window, 'sph', stat)
+            raw_stat_hist = calc_stat(hist_window, 'sph', stat)
+            raw_stat_fut = calc_stat(fut_window, 'sph', stat)
+            debiased_stat_hist = calc_stat(db_hist_window, 'sph', stat)
+            debiased_stat_fut = calc_stat(db_fut_window, 'sph', stat)
+
+            # Save the result to a list for that stat
+            stat_results[stat]['obs'].append(obs_stat)
+            stat_results[stat]['raw_hist'].append(raw_stat_hist)
+            stat_results[stat]['raw_fut'].append(raw_stat_fut)
+            stat_results[stat]['debiased_hist'].append(debiased_stat_hist)
+            stat_results[stat]['debiased_fut'].append(debiased_stat_fut)
+
+            logger.info(f'Data stored to {stat} for {date}.')
+        
+        # Close all datasets out of memory
+        obs_window.close()
+        hist_window.close()
+        fut_window.close()
+        db_hist_window.close()
+        db_fut_window.close()
+
+    # Define label name for each plot
+    labels = ['a.', 'b.', 'c.']
+
+    # Create a subplot for each stat
+    for i, (stat, label) in enumerate(zip(stats, labels)):
+
+        # Format dates to include only the month and day
+        formatted_dates = list(dates.strftime('%m-%d'))
+
+        # Plot scatter data
+        ax[i].plot(
+            formatted_dates,
+            stat_results[stat]['obs'], 
+            'k-',
+            alpha = 0.9, 
+            markersize = 10,
+            label = 'Observations'
+        )
+
+        ax[i].plot(
+            formatted_dates,
+            stat_results[stat]['raw_hist'], 
+            'r-.',
+            alpha = 0.9, 
+            markersize = 10,
+            label = 'Historical WRF Output'
+        )
+
+        ax[i].plot(
+            formatted_dates, 
+            stat_results[stat]['raw_fut'], 
+            'r-',
+            alpha = 0.9,
+            markersize = 10,
+            label = 'Future WRF Output'
+        )
+
+        ax[i].plot(
+            formatted_dates,
+            stat_results[stat]['debiased_hist'], 
+            'g-.',
+            alpha = 0.9, 
+            markersize = 10,
+            label = 'Historical Debiased WRF'
+        )
+
+        ax[i].plot(
+            formatted_dates,
+            stat_results[stat]['debiased_fut'],
+            'g-',
+            alpha = 0.9,
+            markersize = 10,
+            label = 'Future Debiased WRF'
+        )
+
+        # Adjust plot format settings
+        ax[i].text(0.06, 0.95, label, fontsize = 15, transform = ax[i].transAxes)
+        ax[i].grid(True, linestyle = '--', alpha = 0.5)
+
+        # Set x axis labels and tick labels
+        ax[i].set_xlabel('Day of Year')
+        ax[i].set_xticks(['01-01', '02-01', '03-01', '04-01', '05-01', '06-01', '07-01', '08-01', '09-01', '10-01', '11-01', '12-01'])
+        ax[i].tick_params(axis = 'x', rotation = 45)
+
+        # Log what stat was added
+        logger.info(f'Scatter plot for {stat} of sph completed!')
+
+    # Global settings for figure
+    ax[0].set_ylabel(f'sph ({units["sph"]})')
+    handles, labels = ax[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc = 'upper left', bbox_to_anchor = (1.0, 0.98), frameon = True)
+    plt.tight_layout()
+    plt.show()
+    logger.info(f'Annual scatter plot complete for sph.')
+
+    # Opt to save image to sub directory
+    if save:
+        stat_str = '_'.join(map(str, stats)) # Pull out items from stat to add to filename
+        os.makedirs(current_dir / 'figures', exist_ok = True)
+        save_path = current_dir / 'figures' / f'{save_name}.png' # Save using actual lat and lon values used
+        fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
+        logger.success(f'Annual scatter plot saved to: {save_path}')
 
 # mean tmmn bias map
 def mean_bias_map(var, save_name = 'mean_bias_map', save = False):
@@ -613,8 +777,10 @@ def mean_bias_map(var, save_name = 'mean_bias_map', save = False):
 
 if __name__ == '__main__':
 
-    db_pro_map = db_process_map('tmmx_debiasing_process', save = True)
+    # db_pro_map = db_process_map('tmmx_debiasing_process_updated', save = True)
+    sph_scatter = annual_scatter(stats = ['median', '0.95', '0.05'], save_name = 'annual_scatter_sph', save = True)
     # trend = trend_plt('tmmn_vs_tmmx_trend_plt', save = True)
     # cdf = cdf_plt('tmmn_pr_srad_uas_cdf_plt', save = True)
     # bias_map = mean_bias_map('tmmn', 'tmmn_mean_bias', save = True)
+
 
