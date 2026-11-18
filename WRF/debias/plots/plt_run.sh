@@ -3,13 +3,13 @@
 #SBATCH --cluster=notchpeak
 #SBATCH --account=uspcasw-np
 #SBATCH --partition=uspcasw-np
-#SBATCH --job-name=pr
+#SBATCH --job-name=tmmx
 #SBATCH --time=1-00:00:00
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=pr.out    
-#SBATCH --error=pr.err
+#SBATCH --output=tmmx.out    
+#SBATCH --error=tmmx.err
 
 # Load in software
 module load miniforge3

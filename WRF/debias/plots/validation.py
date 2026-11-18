@@ -905,10 +905,10 @@ def main(var, bias_type, wrf_output_location, elevation = False):
     hist = mod.sel(time = slice('1985-01-01', '2014-12-31'))
     fut = mod.sel(time = slice('2015-01-01', '2099-12-31'))
 
-    debiased_hist_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*1985-2014.nc'))
+    debiased_hist_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*1985-2014_left.nc'))
     debiased_hist = xr.open_dataset(debiased_hist_path[0], decode_times = True)
 
-    debiased_fut_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*2015-2099.nc'))
+    debiased_fut_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*2015-2099_left.nc'))
     debiased_fut = xr.open_dataset(debiased_fut_path[0], decode_times = True)
 
     # SLC airport coordinates
@@ -939,7 +939,7 @@ def main(var, bias_type, wrf_output_location, elevation = False):
     # Plot selections
     # scatter = annual_scatter(var, obs, hist, fut, debiased_hist, debiased_fut, lat, lon, stats = ['median', 0.95, 0.5], save_name = f'annual_scatter_{place}_{var}', save = True) 
     # trend = trend_plt(var, obs, hist, fut, debiased_hist, debiased_fut, '1985-03-05', lat, lon, save_name = f'trend_plot_{place}_{var}', save = True)
-    cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['2070-01-15', '2070-04-15', '2070-07-15', '2070-10-15'], lat = lat, lon = lon, save_name = f'cdf_{place}_{var}',save = True) 
+    cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['2070-01-15', '2070-04-15', '2070-07-15', '2070-10-15'], lat = lat, lon = lon, save_name = f'cdf_{place}_{var}_test',save = True) 
     # seasonal = seasonal_bias(var, fut, debiased_fut, bias_type, save_name = f'seasonal_bias_{var}', save = True)
     # bias_map = min_n_max_bias(var, fut, debiased_fut, bias_type, save_name = f'min_n_max_{var}', save = True) 
     # bias = bias_scatter(var, raw, debiased, save = True)
@@ -956,8 +956,8 @@ if __name__ == '__main__':
 
     # Only inputs required
     main(
-        var = 'pr', 
-        bias_type = 'multiplicative',
+        var = 'tmmx', 
+        bias_type = 'additive',
         wrf_output_location = '/uufs/chpc.utah.edu/common/home/strong-group7/husile/gsl/wrfout_multimodel/wrfout_multimodel_hist_1984-2014'
     )
 

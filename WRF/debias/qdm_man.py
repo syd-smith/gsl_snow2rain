@@ -51,7 +51,7 @@ logger.debug(f'Log files saved to {log_path}')
 # ==================
 
 class StepFunc3D:
-    def __init__(self, x, y, ival = 0, sorted = False, side = 'right'):
+    def __init__(self, x, y, ival = 0, sorted = False, side = 'left'):
         # Check that the side parameter is valid
         if side.lower() not in ['right', 'left']:
             raise ValueError('Side can take the values "right" or "left."')
@@ -78,8 +78,9 @@ class StepFunc3D:
 
     def __call__(self, lookup):
         """
-        Make the step function a callable object that acts like a function."""
-        lookup = np.asarray(lookup, dtype=float)
+        Make the step function a callable object that acts like a function.
+        """
+        lookup = np.asarray(lookup, dtype = float)
 
         # Adds a leading time dimension if the array passed is missing one (i.e. if it is only lat and lon)
         if lookup.ndim == self.x.ndim - 1:             
@@ -136,7 +137,7 @@ class vectorized_QDM(StepFunc3D):
     Y output: cumulative probabilities ranging from 1/N to 1
     """
 
-    def __init__(self, data, axis = 0, side = 'right'):
+    def __init__(self, data, axis = 0, side = 'left'):
         # Convert input data into np.array
         arr = np.asarray(data, dtype = float)
 
@@ -674,7 +675,7 @@ if __name__ == '__main__':
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
-        debiased_fut_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_2015-2099.nc')
+        debiased_fut_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_2015-2099_left.nc')
     
         # Save data to netCDF file
         debiased_fut.to_netcdf(debiased_fut_path)
@@ -696,7 +697,7 @@ if __name__ == '__main__':
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
-        debiased_hist_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_1985-2014.nc')
+        debiased_hist_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_1985-2014_left.nc')
 
         # Save data to netCDF file
         debiased_hist.to_netcdf(debiased_hist_path)
@@ -718,3 +719,4 @@ if __name__ == '__main__':
 
     # Force script to stop running once code is finished
     sys.exit(0)
+
