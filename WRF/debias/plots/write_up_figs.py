@@ -84,10 +84,10 @@ def open_datasets(var, mod_sep = False):
     mod_path = glob.glob(str(parent_dir / 'daily' / f'*{var}*.nc'))
     mod = xr.open_dataset(mod_path[0], decode_times = True)
 
-    debiased_hist_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*1985-2014.nc'))
+    debiased_hist_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*1985-2014_left.nc'))
     debiased_hist = xr.open_dataset(debiased_hist_path[0], decode_times = True)
 
-    debiased_fut_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*2015-2099.nc'))
+    debiased_fut_path = glob.glob(str(parent_dir / 'wrfout' / f'*{var}*2015-2099_left.nc'))
     debiased_fut = xr.open_dataset(debiased_fut_path[0], decode_times = True)
 
     if mod_sep:
@@ -777,10 +777,10 @@ def mean_bias_map(var, save_name = 'mean_bias_map', save = False):
 
 if __name__ == '__main__':
 
-    # db_pro_map = db_process_map('tmmx_debiasing_process_updated', save = True)
+    db_pro_map = db_process_map('tmmx_debiasing_process_updated', save = True)
     sph_scatter = annual_scatter(stats = ['median', '0.95', '0.05'], save_name = 'annual_scatter_sph', save = True)
-    # trend = trend_plt('tmmn_vs_tmmx_trend_plt', save = True)
-    # cdf = cdf_plt('tmmn_pr_srad_uas_cdf_plt', save = True)
-    # bias_map = mean_bias_map('tmmn', 'tmmn_mean_bias', save = True)
+    trend = trend_plt('tmmn_vs_tmmx_trend_plt', save = True)
+    cdf = cdf_plt('tmmn_pr_srad_uas_cdf_plt', save = True)
+    bias_map = mean_bias_map('tmmn', 'tmmn_mean_bias', save = True)
 
 
