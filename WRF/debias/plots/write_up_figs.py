@@ -63,7 +63,7 @@ units = {
     'tmmn': 'K',
     'tmmx': 'K',
     'pr': 'mm/day',
-    'sph': 'kg kg-1',
+    'sph': 'g kg-1',
     'srad': 'W m-2',
     'vas': 'm s-1',
     'uas': 'm s-1',
@@ -140,18 +140,18 @@ def db_process_map(save_name = 'db_process_map', save = False):
     ele_ds = xr.open_dataset(ele_path[0])
 
     # Average model data
-    fut_mean = hist.sel(time = (hist.time.dt.month == 6) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
-    debiased_fut_mean = debiased_hist.sel(time = (hist.time.dt.month == 6) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
+    fut_mean = hist.sel(time = (hist.time.dt.month == 2) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
+    debiased_fut_mean = debiased_hist.sel(time = (hist.time.dt.month == 2) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
 
     # Normalize colorbar for raw and debiased model data
-    mod_norm = mcolors.TwoSlopeNorm(vmin = 280, vmax = 310, vcenter = 295)
+    mod_norm = mcolors.TwoSlopeNorm(vmin = 270, vmax = 285, vcenter = 278)
 
     # Plot raw model data
     mod_map = axes[0].contourf(fut_mean['tmmx'].lon.values,
                             fut_mean['tmmx'].lat.values, 
                             fut_mean['tmmx'].values,
                             shading = 'nearest',
-                            cmap = cmap('MPL_afmhot', revBool = True),
+                            cmap = cmap('MPL_YlGnBu', revBool = True),
                             transform = wrf_proj, # Tells cartopy lat/lon values are in degrees
                             norm = mod_norm
             )
@@ -161,7 +161,7 @@ def db_process_map(save_name = 'db_process_map', save = False):
                                 debiased_fut_mean['tmmx'].lat.values, 
                                 debiased_fut_mean['tmmx'].values,
                                 shading = 'nearest',
-                                cmap = cmap('MPL_afmhot', revBool = True),
+                                cmap = cmap('MPL_YlGnBu', revBool = True),
                                 transform = wrf_proj, # Tells cartopy lat/lon values are in degrees
                                 norm = mod_norm
                 )
@@ -173,7 +173,7 @@ def db_process_map(save_name = 'db_process_map', save = False):
                 norm = mod_norm, 
                 orientation = 'vertical', 
                 label = f'tmmx ({units["tmmx"]})', 
-                ticks = [280, 285, 290, 295, 300, 305, 310],
+                ticks = [270, 272, 274, 276, 278, 280, 282, 284],
                 shrink = 0.65, 
                 pad = 0.05
                 )
@@ -184,27 +184,31 @@ def db_process_map(save_name = 'db_process_map', save = False):
     logger.info('Initial bias calculations complete for tmmx.')
 
     # Plot bias data
-    anom_norm = mcolors.TwoSlopeNorm(vmin = -8, vcenter = 0, vmax = 8)
+    anom_norm = mcolors.TwoSlopeNorm(vmin = -10, vcenter = 0, vmax = 10)
     anom_map = axes[2].contourf(bias['tmmx'].lon.values,
                                 bias['tmmx'].lat.values, 
                                 bias['tmmx'].values,
                                 shading = 'nearest',
-                                cmap = cmap('BlueWhiteOrangeRed'),
+                                cmap = cmap('hotcold_18lev'),
                                 transform = wrf_proj, # Tells cartopy lat/lon values are in degrees
                                 norm = anom_norm
                 )
 
     # Add a colorbar centered on zero
     anom_ax = fig.add_axes([0.92, 0.17, 0.02, 0.65])
-    fig.colorbar(anom_map, 
+    cbar = fig.colorbar(anom_map, 
                 cax = anom_ax,
                 norm = anom_norm, 
                 orientation = 'vertical', 
                 label = f'tmmx bias ({units["tmmx"]})', 
-                ticks = [-8, -6, -4, -2, 0, 2, 4, 6, 8],
+                ticks = [-10, -8, -6, -4, -2, 0, 2],
                 shrink = 0.65, 
                 pad = 0.05
                 )
+
+    # Move ticks and labels to the right side of colorbar
+    cbar.ax.yaxis.tick_right()
+    cbar.ax.yaxis.set_label_position('right')
 
     # Define labels for each plot
     labels = ['a.', 'b.', 'c.']
@@ -394,7 +398,7 @@ def cdf_plt(save_name, save = True):
     ax = ax.flatten() # Flatten the axes array to make it easier to iterate over
 
     # Set date of interest to June 15
-    date = pd.to_datetime('1988-06-15')
+    date = pd.to_datetime('1988-01-15')
 
     # SLC airport coordinates
     lat = 40.788
@@ -402,7 +406,7 @@ def cdf_plt(save_name, save = True):
 
     # List of plot labels and variables
     labels = ['a.', 'b.', 'c.', 'd.']
-    vars = ['tmmn', 'pr', 'srad', 'uas']
+    vars = ['tmmx','tmmn', 'pr', 'sph']
 
     for i, (var, label) in enumerate(zip(vars, labels)):
         logger.info(f'Creating cdf plot for {var}.')
@@ -492,9 +496,18 @@ def cdf_plt(save_name, save = True):
 
         # Adjust plot format settings for each subplot
         ax[i].text(0.92, 0.05, label, fontsize = 15, transform = ax[i].transAxes)
+        ax[i].grid(True, linestyle = '--', alpha = 0.5)
+
+        # Adjust plot labels and ticks
         ax[i].set_ylabel('Percentile')
         ax[i].set_xlabel(f'{var} ({units[var]})')
-        ax[i].grid(True, linestyle = '--', alpha = 0.5)
+
+        # Zoom in precipitation on values that are greater than 0
+        if var == 'pr':
+            ax[i].set_ylim(0.5, 1)
+            ax[i].set_yticks([0.5, 0.6, 0.7, 0.8, 0.9, 1])
+        else:
+            ax[i].set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1])
         logger.info(f'Plotting completed for {date}.')
 
     # Global plot settings
@@ -603,7 +616,7 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
         # Plot scatter data
         ax[i].plot(
             formatted_dates,
-            stat_results[stat]['obs'], 
+            stat_results[stat]['obs'].values * 1000, 
             'k-',
             alpha = 0.9, 
             markersize = 10,
@@ -612,7 +625,7 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
 
         ax[i].plot(
             formatted_dates,
-            stat_results[stat]['raw_hist'], 
+            stat_results[stat]['raw_hist'].values * 1000, 
             'r-.',
             alpha = 0.9, 
             markersize = 10,
@@ -621,7 +634,7 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
 
         ax[i].plot(
             formatted_dates, 
-            stat_results[stat]['raw_fut'], 
+            stat_results[stat]['raw_fut'].values * 1000, 
             'r-',
             alpha = 0.9,
             markersize = 10,
@@ -630,7 +643,7 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
 
         ax[i].plot(
             formatted_dates,
-            stat_results[stat]['debiased_hist'], 
+            stat_results[stat]['debiased_hist'].values * 1000, 
             'g-.',
             alpha = 0.9, 
             markersize = 10,
@@ -639,7 +652,7 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
 
         ax[i].plot(
             formatted_dates,
-            stat_results[stat]['debiased_fut'],
+            stat_results[stat]['debiased_fut'].values * 1000,
             'g-',
             alpha = 0.9,
             markersize = 10,
@@ -654,6 +667,9 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
         ax[i].set_xlabel('Day of Year')
         ax[i].set_xticks(['01-01', '02-01', '03-01', '04-01', '05-01', '06-01', '07-01', '08-01', '09-01', '10-01', '11-01', '12-01'])
         ax[i].tick_params(axis = 'x', rotation = 45)
+
+        # Set y axis labels
+        ax[i].set_yticks([0, 2, 4, 6, 8, 10, 12])
 
         # Log what stat was added
         logger.info(f'Scatter plot for {stat} of sph completed!')
@@ -777,10 +793,11 @@ def mean_bias_map(var, save_name = 'mean_bias_map', save = False):
 
 if __name__ == '__main__':
 
-    db_pro_map = db_process_map('tmmx_debiasing_process_updated', save = True)
-    sph_scatter = annual_scatter(stats = ['median', '0.95', '0.05'], save_name = 'annual_scatter_sph', save = True)
-    trend = trend_plt('tmmn_vs_tmmx_trend_plt', save = True)
-    cdf = cdf_plt('tmmn_pr_srad_uas_cdf_plt', save = True)
-    bias_map = mean_bias_map('tmmn', 'tmmn_mean_bias', save = True)
+    db_pro_map = db_process_map('tmmx_debiasing_process_feb', save = True)
+    # sph_scatter = annual_scatter(stats = ['median', '0.95', '0.05'], save_name = 'annual_scatter_sph', save = True)
+    # trend = trend_plt('tmmn_vs_tmmx_trend_plt', save = True)
+    # cdf = cdf_plt('tmmn_pr_srad_uas_cdf_plt', save = True)
+    # bias_map = mean_bias_map('tmmn', 'tmmn_mean_bias', save = True)
 
 
+# %%

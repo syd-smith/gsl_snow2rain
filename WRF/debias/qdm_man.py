@@ -472,6 +472,10 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, bias_type, dry_day_thres
         # Calculate the future offset (ratio between historical and future period)
         fut_offset = dry_day_adjustment(hist_vals, mod_date[var].values, dry_day_threshold)
 
+        # Apply dry day threshold to obs_vals
+        dd_thresh_cond = (obs_vals < dry_day_threshold) & (obs_vals > 0)
+        obs_vals = np.where(dd_thresh_cond, dry_day_threshold, obs_vals)
+
         # Apply future offset to observational values 
         mod_bias_corrected = obs_vals * fut_offset
 
@@ -675,7 +679,7 @@ if __name__ == '__main__':
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
-        debiased_fut_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_2015-2099_left.nc')
+        debiased_fut_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_2015-2099_test.nc')
     
         # Save data to netCDF file
         debiased_fut.to_netcdf(debiased_fut_path)
@@ -697,7 +701,7 @@ if __name__ == '__main__':
         os.makedirs(output_dir, exist_ok = True) # Don't make if it already exists
 
         # Generate save name for debiased data
-        debiased_hist_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_1985-2014_left.nc')
+        debiased_hist_path = os.path.join(output_dir, f'wrfout_GSLBIP_multimodel_ssp245_{var}_1985-2014_test.nc')
 
         # Save data to netCDF file
         debiased_hist.to_netcdf(debiased_hist_path)
