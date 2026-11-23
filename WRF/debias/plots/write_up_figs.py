@@ -113,22 +113,9 @@ def db_process_map(save_name = 'db_process_map', save = False):
 
     # open datasets
     obs, hist, fut, debiased_hist, debiased_fut = open_datasets('tmmx', mod_sep = True)
-    
-    # Find parameters of WRF grid
-    proj_lat = fut.attrs.get('CEN_LAT')
-    proj_lon = fut.attrs.get('CEN_LON')
-    true_lat1 = fut.attrs.get('TRUELAT1')
-    true_lat2 = fut.attrs.get('TRUELAT2')
-
-    # Define the Cartopy projection that matches the WRF grid
-    wrf_proj = ccrs.LambertConformal(
-        central_longitude = proj_lon, 
-        central_latitude = proj_lat, 
-        standard_parallels = (true_lat1, true_lat2)
-    )
 
     # Initialize plot
-    fig, ax = plt.subplots(1, 3, figsize = (15, 6), subplot_kw = {'projection': wrf_proj})
+    fig, ax = plt.subplots(1, 3, figsize = (15, 6), subplot_kw = {'projection': ccrs.PlateCarree()})
     axes = ax.flatten()
 
     # Check for elevation data output
@@ -140,29 +127,29 @@ def db_process_map(save_name = 'db_process_map', save = False):
     ele_ds = xr.open_dataset(ele_path[0])
 
     # Average model data
-    fut_mean = hist.sel(time = (hist.time.dt.month == 2) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
-    debiased_fut_mean = debiased_hist.sel(time = (hist.time.dt.month == 2) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
+    hist_mean = hist.sel(time = (hist.time.dt.month == 2) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
+    debiased_hist_mean = debiased_hist.sel(time = (hist.time.dt.month == 2) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
 
     # Normalize colorbar for raw and debiased model data
-    mod_norm = mcolors.TwoSlopeNorm(vmin = 270, vmax = 285, vcenter = 278)
+    mod_norm = mcolors.TwoSlopeNorm(vmin = 270, vmax = 290, vcenter = 280)
 
     # Plot raw model data
-    mod_map = axes[0].contourf(fut_mean['tmmx'].lon.values,
-                            fut_mean['tmmx'].lat.values, 
-                            fut_mean['tmmx'].values,
+    mod_map = axes[0].contourf(obs.lon.values[0],
+                            obs.lat.values[0], 
+                            hist_mean['tmmx'].values,
                             shading = 'nearest',
-                            cmap = cmap('MPL_YlGnBu', revBool = True),
-                            transform = wrf_proj, # Tells cartopy lat/lon values are in degrees
+                            cmap = cmap('cmp_haxby'),
+                            transform = ccrs.PlateCarree(), # Tells cartopy lat/lon values are in degrees
                             norm = mod_norm
             )
 
     # Plot debiased model data
-    db_map = axes[1].contourf(debiased_fut_mean['tmmx'].lon.values,
-                                debiased_fut_mean['tmmx'].lat.values, 
-                                debiased_fut_mean['tmmx'].values,
+    db_map = axes[1].contourf(obs.lon.values[0],
+                                obs.lat.values[0], 
+                                debiased_hist_mean['tmmx'].values,
                                 shading = 'nearest',
-                                cmap = cmap('MPL_YlGnBu', revBool = True),
-                                transform = wrf_proj, # Tells cartopy lat/lon values are in degrees
+                                cmap = cmap('cmp_haxby'),
+                                transform = ccrs.PlateCarree(), # Tells cartopy lat/lon values are in degrees
                                 norm = mod_norm
                 )
 
@@ -179,18 +166,18 @@ def db_process_map(save_name = 'db_process_map', save = False):
                 )
 
     # Calculate the bias (anomaly)
-    bias = fut_mean - debiased_fut_mean
+    bias = hist_mean - debiased_hist_mean
     logger.info(bias)
     logger.info('Initial bias calculations complete for tmmx.')
 
     # Plot bias data
     anom_norm = mcolors.TwoSlopeNorm(vmin = -10, vcenter = 0, vmax = 10)
-    anom_map = axes[2].contourf(bias['tmmx'].lon.values,
-                                bias['tmmx'].lat.values, 
+    anom_map = axes[2].contourf(obs.lon.values[0],
+                                obs.lat.values[0], 
                                 bias['tmmx'].values,
                                 shading = 'nearest',
                                 cmap = cmap('hotcold_18lev'),
-                                transform = wrf_proj, # Tells cartopy lat/lon values are in degrees
+                                transform = ccrs.PlateCarree(), # Tells cartopy lat/lon values are in degrees
                                 norm = anom_norm
                 )
 
@@ -215,21 +202,25 @@ def db_process_map(save_name = 'db_process_map', save = False):
 
     for ax, label in zip(axes, labels):
         # Restict panel size to accomodate for curve in grid creating white space
-        # ax.set_extent([1, 88, 1, 109], crs = wrf_proj)
+        ax.set_extent([-114, -110, 39.3, 43.17], crs = ccrs.PlateCarree())
 
         # Add elevation contour lines
-        ele_data = ax.contour(fut_mean['tmmx'].lon.values,
-                        fut_mean['tmmx'].lat.values, 
+        ele_data = ax.contour(obs.lon.values[0],
+                        obs.lat.values[0], 
                         ele_ds['HGT'].values, 
                         levels = [1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000], 
                         colors = 'k', 
                         linewidths = 0.5, 
-                        transform = wrf_proj)
+                        transform = ccrs.PlateCarree())
         ax.clabel(ele_data, inline = True, fmt = '%1.0f', fontsize = 6)
 
         # Add letter labels to sub plots
         ax.text(0.02, 0.94, label, fontsize = 20, transform = ax.transAxes)
 
+        # Add outlines of lakes
+        lakes = cfeature.NaturalEarthFeature(category = 'physical', name = 'lakes', scale = '10m', facecolor = 'none', edgecolor = 'peru', zorder = 5)
+        ax.add_feature(lakes, linewidth = 1.25)
+        
     # # Adjust subplot spacing
     # fig.subplots_adjust(hspace = 0.01, wspace = 0.05, bottom = 0.10, top = 0.95, left = 0.05, right = 0.95)
 
@@ -544,11 +535,12 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
 
     logger.info(f'Obs dataset type: {type(obs)}')
     # Slice dataset to a specific location
-    obs_sel = loc_sel(obs, 'sph', lat, lon)
-    hist_sel = loc_sel(hist, 'sph', lat, lon)
-    fut_sel = loc_sel(fut, 'sph', lat, lon)
-    db_hist_sel = loc_sel(db_hist, 'sph', lat, lon)
-    db_fut_sel = loc_sel(db_fut, 'sph', lat, lon)
+    # Convert from kg kg-1 to g kg-1 by multiplying by 1000
+    obs_sel = loc_sel(obs * 1000, 'sph', lat, lon)
+    hist_sel = loc_sel(hist * 1000, 'sph', lat, lon)
+    fut_sel = loc_sel(fut * 1000, 'sph', lat, lon)
+    db_hist_sel = loc_sel(db_hist * 1000, 'sph', lat, lon)
+    db_fut_sel = loc_sel(db_fut * 1000, 'sph', lat, lon)
     logger.info(f'Obs dataset type after location selection {type(obs_sel)}')
 
     # Create list of dates
@@ -616,7 +608,7 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
         # Plot scatter data
         ax[i].plot(
             formatted_dates,
-            stat_results[stat]['obs'].values * 1000, 
+            stat_results[stat]['obs'], 
             'k-',
             alpha = 0.9, 
             markersize = 10,
@@ -625,7 +617,7 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
 
         ax[i].plot(
             formatted_dates,
-            stat_results[stat]['raw_hist'].values * 1000, 
+            stat_results[stat]['raw_hist'], 
             'r-.',
             alpha = 0.9, 
             markersize = 10,
@@ -634,7 +626,7 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
 
         ax[i].plot(
             formatted_dates, 
-            stat_results[stat]['raw_fut'].values * 1000, 
+            stat_results[stat]['raw_fut'], 
             'r-',
             alpha = 0.9,
             markersize = 10,
@@ -643,7 +635,7 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
 
         ax[i].plot(
             formatted_dates,
-            stat_results[stat]['debiased_hist'].values * 1000, 
+            stat_results[stat]['debiased_hist'], 
             'g-.',
             alpha = 0.9, 
             markersize = 10,
@@ -652,7 +644,7 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
 
         ax[i].plot(
             formatted_dates,
-            stat_results[stat]['debiased_fut'].values * 1000,
+            stat_results[stat]['debiased_fut'],
             'g-',
             alpha = 0.9,
             markersize = 10,
@@ -669,7 +661,7 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
         ax[i].tick_params(axis = 'x', rotation = 45)
 
         # Set y axis labels
-        ax[i].set_yticks([0, 2, 4, 6, 8, 10, 12])
+        ax[i].set_yticks([0, 2, 4, 6, 8, 10, 12, 14])
 
         # Log what stat was added
         logger.info(f'Scatter plot for {stat} of sph completed!')
@@ -691,32 +683,27 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
         logger.success(f'Annual scatter plot saved to: {save_path}')
 
 # mean tmmn bias map
-def mean_bias_map(var, save_name = 'mean_bias_map', save = False):
+def seasonal_bias(save_name = 'seasonal_bias_pr', save = False):
     """
     Creates a map of averaged biases. Elevational variations are meant to pop out. Break into seasonal if more clarity is needed.
     """
+        
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
-    logger.info(f'Creating mean bias map for {var}.')
+    import matplotlib.cm as cm
+    from xarray.groupers import SeasonResampler
+    logger.info(f'Creating mean bias map for pr.')
 
     # open datasets
-    obs, hist, fut, debiased_hist, debiased_fut = open_datasets(var, mod_sep = True)
-    
-    # Find parameters of WRF grid
-    proj_lat = fut.attrs.get('CEN_LAT')
-    proj_lon = fut.attrs.get('CEN_LON')
-    true_lat1 = fut.attrs.get('TRUELAT1')
-    true_lat2 = fut.attrs.get('TRUELAT2')
+    obs, hist, fut, debiased_hist, debiased_fut = open_datasets('pr', mod_sep = True)
 
-    # Define the Cartopy projection that matches the WRF grid
-    wrf_proj = ccrs.LambertConformal(
-        central_longitude = proj_lon, 
-        central_latitude = proj_lat, 
-        standard_parallels = (true_lat1, true_lat2)
-    )
+    # Organize data by season
+    resampler = SeasonResampler(['DJF', 'MAM', 'JJA', 'SON'])
+    obs_mean = obs.resample(time = resampler).mean(dim = 'time')
+    hist_mean = hist.resample(time = resampler).mean(dim = 'time')
 
     # Initialize plot
-    fig, ax = plt.subplots(2, 2, figsize = (8, 9), subplot_kw = {'projection': wrf_proj})
+    fig, ax = plt.subplots(2, 2, figsize = (7, 7.5), subplot_kw = {'projection': ccrs.PlateCarree()})
     axes = ax.flatten()
 
     # Check for elevation data output
@@ -727,48 +714,44 @@ def mean_bias_map(var, save_name = 'mean_bias_map', save = False):
     # Open elevation data
     ele_ds = xr.open_dataset(ele_path[0])
 
-    # Calculate the bias (meant to handle additive bias calculation for tmmn)
-    bias = fut - debiased_fut
-    logger.info(bias)
-    logger.info(f'Initial bias calculations complete for {var}.')
-
     # Fix color range for bias values
-    norm = mcolors.TwoSlopeNorm(vmin = -2, vmax = 8, vcenter = 0)
+    norm = mcolors.TwoSlopeNorm(vmin = 0, vmax = 3, vcenter = 1)
 
     # Create list of months to show in plots
-    months = [1, 4, 7, 10]
+    seasons = [12, 3, 6, 9] # Resampler organizes data by season with the timestamp on the first day of the season
     labels = ['a.', 'b.', 'c.', 'd.']
 
-    for ax, month, label in zip(axes, months, labels):
-        # Select month from the dataset
-        month_sel = bias.sel(time = (bias.time.dt.month == month))
+    for ax, season, label in zip(axes, seasons, labels):
+        # Select season of interest from the dataset and calcualte its mean along the time dimension
+        obs_season_mean = obs_mean.sel(time = obs_mean.time.dt.month == season).mean(dim = 'time')
+        hist_season_mean = hist_mean.sel(time = hist_mean.time.dt.month == season).mean(dim = 'time')
 
-        # Take monthly average
-        month_avg = month_sel.mean(dim = 'time')
-        # When you take the mean it drops the other coords where lat and lon values are stored
-        # Use lat and lon values from month_sel instead
+        # Calculate the bias at each location
+        bias = hist_season_mean['pr'].values / obs_season_mean['pr'].values
 
         # Restict panel size to accomodate for curve in grid creating white space
-        ax.set_extent([-114.2, -109.95, 39.22, 43.17], crs = wrf_proj)
+        ax.set_extent([-114, -110, 39.3, 43.17], crs = ccrs.PlateCarree())
 
-        avg_plt = ax.pcolormesh(month_sel[var].lon.values[0],
-                        month_sel[var].lat.values[0], 
-                        month_avg[var].values,
-                        shading = 'nearest',
-                        cmap = cmap('GMT_jet'),
-                        transform = wrf_proj, # Tells cartopy lat/lon values are in degrees
+        avg_plt = ax.contourf(obs.lon.values[0],
+                        obs.lat.values[0], 
+                        bias,
+                        cmap = cmap('precip_diff_12lev'),
+                        transform = ccrs.PlateCarree(), # Tells cartopy lat/lon values are in degrees
                         norm = norm
         )
 
         # Add elevation contour lines
-        ele_data = ax.contour(month_sel[var].lon.values[0],
-                        month_sel[var].lat.values[0], 
+        ele_data = ax.contour(obs.lon.values[0],
+                        obs.lat.values[0], 
                         ele_ds['HGT'].values, 
                         levels = [1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000], 
                         colors = 'k', 
                         linewidths = 0.5, 
-                        transform = wrf_proj)
+                        transform = ccrs.PlateCarree())
         ax.clabel(ele_data, inline = True, fmt = '%1.0f', fontsize = 6)
+
+        lakes = cfeature.NaturalEarthFeature(category = 'physical', name = 'lakes', scale = '10m', facecolor = 'none', edgecolor = 'royalblue', zorder = 5)
+        ax.add_feature(lakes, linewidth = 1.25)
 
         # Add letter labels to sub plots
         ax.text(0.02, 0.91, label, fontsize = 20, transform = ax.transAxes)
@@ -778,7 +761,15 @@ def mean_bias_map(var, save_name = 'mean_bias_map', save = False):
 
     # Add colorbar centered on zero
     cbar_ax = fig.add_axes([0.2, 0.05, 0.6, 0.03])
-    fig.colorbar(avg_plt, cax = cbar_ax, norm = norm, orientation = 'horizontal', label = f'{var} ({units[var]})', ticks = [-2, -1, 0, 2, 4, 6, 8], shrink = 0.65, pad = 0.05)
+    sm_default = cm.ScalarMappable(norm = norm, cmap = cmap('precip_diff_12lev'))
+    fig.colorbar(sm_default, 
+                cax = cbar_ax, 
+                norm = norm, 
+                orientation = 'horizontal', 
+                label = f'pr ({units["pr"]})', 
+                ticks = [0, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3], 
+                shrink = 0.65, 
+                pad = 0.05)
 
     # Opt to save image to sub directory
     if save:
@@ -787,17 +778,78 @@ def mean_bias_map(var, save_name = 'mean_bias_map', save = False):
         fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Seasonal bias map saved to: {save_path}')
 
+def heat_map(save_name = 'CC_to_bias_heat_map', save = False):
+    """
+    Create a heat map showing the correlation between the bias and the climate change signal for each variable.
+    """
+
+    # Initialize plot
+    fig, ax = plt.subplots(1, 1, figsize = (20, 5))
+
+    # Define levels for the colorbar
+    levels = [0, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.4, 2.6, 2.8, 3]
+    norm = mcolors.TwoSlopeNorm(vmin = 0, vmax = 3, vcenter = 1) 
+
+    # Define x and y axes as variables and seasons
+    variables = range(1, 8) # 7 variables
+    seasons = range(1, 5) # 4 seasons
+
+    # Plot data as a heat map
+    data = ax.pcolormesh(variables, seasons, snow_fractions, shading = 'auto', cmap  = cmap.cmap('MPL_bwr', revBool = True), norm = norm)
+    cbar = fig.colorbar(data, ax = ax, orientation = 'vertical', norm = norm, ticks = levels, pad = 0.02, extend = 'both', boundaries = levels)
+    cbar.ax.xaxis.set_major_formatter(ticker.FormatStrFormatter('%.0f'))
+
+    ax.set_xticks(['tmmx', 'tmmn', 'pr', 'sph', 'srad', 'uas', 'vas'])
+    ax.set_yticks(['DJF', 'MAM', 'JJA', 'SON'])
+
+def concat_ds(var):
+    """
+    Concatenate all netCDF files together for a given variable and save data to a single netCDF file.
+    """
+
+    # Concat and save bias datasets
+    with xr.open_mfdataset(
+        glob.glob(str(parent_dir / 'wrfout' / 'bias' / var / '*.nc')), 
+        combine = 'nested', 
+        concat_dim = 'time', 
+        preprocess = fix_time_coord
+        ) as wrf_open:
+
+        # Write file to netcdf
+        wrf_open.sortby('time').to_netcdf(parent_dir / 'wrfout' / 'bias' / f'bias_{var}.nc')
+
+    # Concat and save future offset values
+    with xr.open_mfdataset(
+        glob.glob(str(parent_dir / 'wrfout' / 'fut_offset' / var / '*.nc')), 
+        combine = 'nested', 
+        concat_dim = 'time', 
+        preprocess = fix_time_coord
+        ) as wrf_open:
+
+        # Write file to netcdf
+        wrf_open.sortby('time').to_netcdf(parent_dir / 'wrfout' / 'fut_offset' / f'fut_offset_{var}.nc')
+    
 # ======================
 # ---- Entry Point ----
-# ======================
+# # ======================
 
 if __name__ == '__main__':
 
-    db_pro_map = db_process_map('tmmx_debiasing_process_feb', save = True)
+    # variables = ['tmmx', 'tmmn', 'pr', 'sph', 'srad', 'uas', 'vas']
+    # for variable in variables:
+    #     concat_ds(variable)
+    #     logger.info(f'Concatenation complete for {variable}.')
+
+    concat_ds('tmmx')
+
+    # db_pro_map = db_process_map('tmmx_debiasing_process_feb', save = True)
     # sph_scatter = annual_scatter(stats = ['median', '0.95', '0.05'], save_name = 'annual_scatter_sph', save = True)
     # trend = trend_plt('tmmn_vs_tmmx_trend_plt', save = True)
     # cdf = cdf_plt('tmmn_pr_srad_uas_cdf_plt', save = True)
-    # bias_map = mean_bias_map('tmmn', 'tmmn_mean_bias', save = True)
+    # bias_map = seasonal_bias(save = True)
+
+
+
 
 
 # %%

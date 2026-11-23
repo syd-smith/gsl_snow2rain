@@ -472,10 +472,6 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, bias_type, dry_day_thres
         # Calculate the future offset (ratio between historical and future period)
         fut_offset = dry_day_adjustment(hist_vals, mod_date[var].values, dry_day_threshold)
 
-        # Apply dry day threshold to obs_vals
-        dd_thresh_cond = (obs_vals < dry_day_threshold) & (obs_vals > 0)
-        obs_vals = np.where(dd_thresh_cond, dry_day_threshold, obs_vals)
-
         # Apply future offset to observational values 
         mod_bias_corrected = obs_vals * fut_offset
 
@@ -493,6 +489,39 @@ def vect_app_fut(obs, hist, mod, var, date, day_window, bias_type, dry_day_thres
     logger.info(mod_bias_corrected)
     logger.info(f'Bias corrected max: {mod_bias_corrected.max()}')
     logger.info(f'Bias corrected min: {mod_bias_corrected.min()}')
+
+    ### Save fut_offset and bias data ###
+    bias_dir = current_dir / 'wrfout' / 'bias' / var
+    os.makedirs(bias_dir, exist_ok = True) # Don't make if it already exists
+    offset_dir = current_dir / 'wrfout' / 'fut_offset' / var
+    os.makedirs(offset_dir, exist_ok = True)
+
+    # Generate save name for saving data
+    bias_path = os.path.join(bias_dir, f'{var}_{date.strftime("%Y-%m-%d")}.nc')
+    offset_path = os.path.join(offset_dir, f'{var}_{date.strftime("%Y-%m-%d")}.nc')
+
+    # Calculate bias
+    if bias_type == 'additive':
+        bias = hist_vals - obs_vals
+
+    elif bias_type == 'multiplicative':
+        bias = dry_day_adjustment(obs_vals, hist_vals, dry_day_threshold)
+
+    # Make copy of mod_loc to plug debiased data into
+    template = mod_date.copy(deep = True)
+
+    # Pull out date information
+    day = int(date.strftime('%d'))
+    month = int(date.strftime('%m'))
+
+    # Plug data into template dataset
+    mask = (template.time.dt.month == month) & (template.time.dt.day == day)
+    template[var].data[mask] = bias 
+    template.to_netcdf(bias_path)
+
+    # Save offset data
+    template[var].data[mask] = fut_offset 
+    template.to_netcdf(offset_path)
 
     return mod_bias_corrected
 
@@ -723,4 +752,3 @@ if __name__ == '__main__':
 
     # Force script to stop running once code is finished
     sys.exit(0)
-

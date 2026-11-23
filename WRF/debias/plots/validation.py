@@ -943,7 +943,7 @@ def main(var, bias_type, wrf_output_location, elevation = False):
     # Plot selections
     # scatter = annual_scatter(var, obs, hist, fut, debiased_hist, debiased_fut, lat, lon, stats = ['median', 0.95, 0.5], save_name = f'annual_scatter_{place}_{var}', save = True) 
     # trend = trend_plt(var, obs, hist, fut, debiased_hist, debiased_fut, '1985-03-05', lat, lon, save_name = f'trend_plot_{place}_{var}', save = True)
-    cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['2070-01-15', '2070-04-15', '2070-07-15', '2070-10-15'], lat = lat, lon = lon, save_name = f'cdf_{place}_{var}',save = True) 
+    cdf = cdf_plt(var, obs, mod, debiased_hist, debiased_fut, dates = ['2070-01-15', '2070-04-15', '2070-07-15', '2070-10-15'], lat = lat, lon = lon, save_name = f'cdf_{place}_{var}_right',save = True) 
     # seasonal = seasonal_bias(var, fut, debiased_fut, bias_type, save_name = f'seasonal_bias_{var}', save = True)
     # bias_map = min_n_max_bias(var, fut, debiased_fut, bias_type, save_name = f'min_n_max_{var}', save = True) 
     # bias = bias_scatter(var, raw, debiased, save = True)
