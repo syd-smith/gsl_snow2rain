@@ -3,13 +3,13 @@
 #SBATCH --cluster=notchpeak
 #SBATCH --account=uspcasw-np
 #SBATCH --partition=uspcasw-np
-#SBATCH --job-name=pr
+#SBATCH --job-name=all
 #SBATCH --time=1-00:00:00
 #SBATCH --mem=20GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --output=pr.out    
-#SBATCH --error=pr.err
+#SBATCH --output=all.out    
+#SBATCH --error=all.err
 
 # Load in software
 module load miniforge3
@@ -20,5 +20,5 @@ conda activate olympics
 PYTHON_BIN="/uufs/chpc.utah.edu/common/home/strong-group7/sydney/miniforge3_envs/olympics/bin/python"
 
 # Call python file
-${PYTHON_BIN} validation.py 
+${PYTHON_BIN} write_up_figs.py 
 

@@ -101,9 +101,8 @@ def open_datasets(var, mod_sep = False):
     else:
         return obs, mod, debiased_hist, debiased_fut
 
-# three panel plot tmmx april (monthly mean or specific date)
-# raw model -> debiased -> anomaly
-
+# Three panel plot tmmx april (monthly mean or specific date)
+# Raw model -> debiased -> anomaly
 def db_process_map(save_name = 'db_process_map', save = False):
     """
     Creates a map of averaged biases. Elevational variations are meant to pop out. Break into seasonal if more clarity is needed.
@@ -111,8 +110,10 @@ def db_process_map(save_name = 'db_process_map', save = False):
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
 
-    # open datasets
+    # Open datasets
     obs, hist, fut, debiased_hist, debiased_fut = open_datasets('tmmx', mod_sep = True)
+    bias_path = glob.glob(str(parent_dir / 'wrfout' / 'bias' / f'*tmmx*.nc'))
+    bias = xr.opendataset(bias_path[0])
 
     # Initialize plot
     fig, ax = plt.subplots(1, 3, figsize = (15, 6), subplot_kw = {'projection': ccrs.PlateCarree()})
@@ -129,6 +130,7 @@ def db_process_map(save_name = 'db_process_map', save = False):
     # Average model data
     hist_mean = hist.sel(time = (hist.time.dt.month == 2) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
     debiased_hist_mean = debiased_hist.sel(time = (hist.time.dt.month == 2) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
+    bias_mean = bias.sel(time = (bias.time.dt.month == 2) & (bias.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
 
     # Normalize colorbar for raw and debiased model data
     mod_norm = mcolors.TwoSlopeNorm(vmin = 270, vmax = 290, vcenter = 280)
@@ -165,16 +167,11 @@ def db_process_map(save_name = 'db_process_map', save = False):
                 pad = 0.05
                 )
 
-    # Calculate the bias (anomaly)
-    bias = hist_mean - debiased_hist_mean
-    logger.info(bias)
-    logger.info('Initial bias calculations complete for tmmx.')
-
     # Plot bias data
     anom_norm = mcolors.TwoSlopeNorm(vmin = -10, vcenter = 0, vmax = 10)
-    anom_map = axes[2].contourf(obs.lon.values[0],
-                                obs.lat.values[0], 
-                                bias['tmmx'].values,
+    anom_map = axes[2].contourf(bias.lon.values[0],
+                                bias.lat.values[0], 
+                                bias_mean['tmmx'].values,
                                 shading = 'nearest',
                                 cmap = cmap('hotcold_18lev'),
                                 transform = ccrs.PlateCarree(), # Tells cartopy lat/lon values are in degrees
@@ -215,7 +212,7 @@ def db_process_map(save_name = 'db_process_map', save = False):
         ax.clabel(ele_data, inline = True, fmt = '%1.0f', fontsize = 6)
 
         # Add letter labels to sub plots
-        ax.text(0.02, 0.94, label, fontsize = 20, transform = ax.transAxes)
+        ax.text(0.02, 0.93, label, fontsize = 20, transform = ax.transAxes)
 
         # Add outlines of lakes
         lakes = cfeature.NaturalEarthFeature(category = 'physical', name = 'lakes', scale = '10m', facecolor = 'none', edgecolor = 'peru', zorder = 5)
@@ -231,7 +228,7 @@ def db_process_map(save_name = 'db_process_map', save = False):
         fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Seasonal bias map saved to: {save_path}')
 
-# two panel plot of tmmn and tmmx trends to show how T2 was taken to min and max temp
+# Two panel plot of tmmn and tmmx trends to show how T2 was taken to min and max temp
 def trend_plt(save_name = 'trend_plot', save = False):
     """
     Create a graph of model WRF output data, observational data, and both detrended datasets to verify detrending 
@@ -374,7 +371,7 @@ def trend_plt(save_name = 'trend_plot', save = False):
         logger.success(f'Trend plot saved to: {save_path}')
 
 # CDF plt of srad, uas, tmmn, and pr at slc airport for june 15
-def cdf_plt(save_name, save = True):
+def cdf_plt(save_name, save = False):
     """
     Create a plot of the cumulative distribution function for each of the given datasets.
     Data will be reduced to the given locations and dates. Dates must be str(%Y/%m/%d).
@@ -514,6 +511,150 @@ def cdf_plt(save_name, save = True):
         save_path = current_dir / 'figures' / save_name
         fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'CDF plot saved to: {save_path}')
+
+# Four panel season CDF plot for precipitation
+def pr_cdf(save_name = 'pr_cdf_plot', save = False):
+    """
+    Create a plot of the cumulative distribution function for each of the given datasets.
+    Data will be reduced to the given locations and dates. Dates must be str(%Y/%m/%d).
+    This function was intended to create a four pannel plot relecting four dates passed 
+    with one date in each season (a seasonal pannel cdf plot).
+    """
+    import math
+    from statsmodels.distributions.empirical_distribution import ECDF
+    logger.info('Creating cdf plot for pr.')
+
+    # Open datasets for given variable
+    obs, mod, db_hist, db_fut = open_datasets('pr')
+
+    # SLC airport coordinates
+    lat = 40.788
+    lon = -111.978
+
+    # Slice dataset to a specific location
+    obs_sel = loc_sel(obs, 'pr', lat, lon)
+    mod_sel = loc_sel(mod, 'pr', lat, lon)
+    db_hist_sel = loc_sel(db_hist, 'pr', lat, lon)
+    db_fut_sel = loc_sel(db_fut, 'pr', lat, lon)
+
+    # Initialize plot
+    # Make additional rows if stats list is too long
+    fig, ax = plt.subplots(2, 2, figsize = (10, 10)) # Round up the number of columns needed to the nearest whole number
+    ax = ax.flatten() # Flatten the axes array to make it easier to iterate over
+
+    # List of dates
+    dates = ['1988-01-15', '1988-04-15', '1988-07-15', '1988-10-15']
+
+    # List of plot labels
+    labels = ['a.', 'b.', 'c.', 'd.']
+
+    for (i, date), label in zip(enumerate(dates), labels):
+        # Convert date to pd.to_datetime
+        date = pd.to_datetime(date)
+
+        # Slice dataset down to a given window size centered on date
+        # Default window size is 31 days
+        window_size = 31
+        obs_window = running_window_slice(obs_sel, date, window_size)
+        mod_window = running_window_slice(mod_sel, date, window_size)
+        db_hist_window = running_window_slice(db_hist_sel, date, window_size)
+        db_fut_window = running_window_slice(db_fut_sel.copy(deep = True), date, window_size)
+
+        # Use to check that means from the window slices are different for each date used
+        logger.info(f"Date: {date.strftime('%Y-%m-%d')} | Obs Mean: {obs_window.mean().values}")
+        logger.info(f"Date: {date.strftime('%Y-%m-%d')} | Mod Mean: {mod_window.mean().values}")
+        logger.info(f"Date: {date.strftime('%Y-%m-%d')} | DB Hist Mean: {db_hist_window.mean().values}")
+        logger.info(f"Date: {date.strftime('%Y-%m-%d')} | DB fut Mean: {db_fut_window.mean().values}")
+
+        # Pull the year from date
+        year = int(date.strftime('%Y'))
+
+        # Slice into historical and future periods
+        hist_window = mod_window.sel(time = mod_window.time.dt.year.isin(range(1985, 2015)))
+        fut_window = mod_window.sel(time = mod_window.time.dt.year.isin(range(2015, 2099)))
+
+        # Calculate a CDF for each array
+        obs_cdf = ECDF(obs_window)
+        hist_cdf = ECDF(hist_window)
+        fut_cdf = ECDF(fut_window)
+        db_hist_cdf = ECDF(db_hist_window)
+        db_fut_cdf = ECDF(db_fut_window)
+        logger.info(f'CDFs calculated for {date}.')
+
+        # Mask CDF outputs
+        obs_x, obs_y = cdf_masked(obs_cdf)
+        raw_hist_x, raw_hist_y = cdf_masked(hist_cdf)
+        raw_fut_x, raw_fut_y = cdf_masked(fut_cdf)
+        debiased_hist_x, debiased_hist_y = cdf_masked(db_hist_cdf)
+        debiased_fut_x, debiased_fut_y = cdf_masked(db_fut_cdf)
+
+        # Plot CDFs
+        ax[i].plot(
+            obs_x, 
+            obs_y, 
+            'k-',
+            label = 'Observations', 
+            rasterized = True
+        )
+
+        ax[i].plot(
+            raw_hist_x,
+            raw_hist_y,
+            'r-.',
+            label = 'Historical WRF Output', 
+            rasterized = True
+        )
+
+        ax[i].plot(
+            raw_fut_x, 
+            raw_fut_y, 
+            'r-',
+            label = 'Future WRF Output',
+            rasterized = True
+        )
+
+        ax[i].plot(
+            debiased_hist_x,
+            debiased_hist_y,
+            'g-.',
+            label = 'Historical Debiased WRF',
+            rasterized = True
+        )
+
+        ax[i].plot(
+            debiased_fut_x, 
+            debiased_fut_y, 
+            'g-',
+            label = 'Future Debiased WRF',
+            rasterized = True
+        )
+
+        # Adjust y limits for precip
+        ax[i].set_ylim(0.5, 1)
+        ax[i].set_yticks([0.5, 0.6, 0.7, 0.8, 0.9, 1])
+
+        # Adjust plot format settings for each subplot
+        ax[i].set_ylabel('Percentile')
+        ax[i].set_xlabel(f'pr ({units["pr"]})')
+        ax[i].grid(True, linestyle = '--', alpha = 0.5)
+
+        # Add label to each plot
+        ax[i].text(0.92, 0.05, label, fontsize = 15, transform = ax[i].transAxes)
+        logger.info(f'Plotting completed for {date}.')
+
+    # Global plot settings
+    handles, labels = ax[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc = 'upper left', bbox_to_anchor = (0.91, 0.89), frameon = True)
+    # plt.tight_layout()
+    plt.show()
+    logger.info('CDF plot complete for pr.')
+
+    # Opt to save image to sub directory
+    if save:
+        os.makedirs(current_dir / 'figures', exist_ok = True)
+        save_path = current_dir / 'figures' / f'{save_name}.png' # Save using actual lat and lon values used
+        fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
+        logger.success(f'PR CDF plot saved to: {save_path}')
 
 # sph annual scatter plot
 def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = False): 
@@ -682,7 +823,7 @@ def annual_scatter(stats = ['median'], save_name = 'annual_scatter', save = Fals
         fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
         logger.success(f'Annual scatter plot saved to: {save_path}')
 
-# mean tmmn bias map
+# Mean tmmn bias map
 def seasonal_bias(save_name = 'seasonal_bias_pr', save = False):
     """
     Creates a map of averaged biases. Elevational variations are meant to pop out. Break into seasonal if more clarity is needed.
@@ -783,6 +924,15 @@ def heat_map(save_name = 'CC_to_bias_heat_map', save = False):
     Create a heat map showing the correlation between the bias and the climate change signal for each variable.
     """
 
+    # Open datasets
+    cc_signal_path = glob.glob(str(parent_dir / 'wrfout' / 'fut_offset' / f'*tmmx*.nc'))
+    cc_signal = xr.opendataset(cc_signal_path[0])
+    bias_path = glob.glob(str(parent_dir / 'wrfout' / 'bias' / f'*tmmx*.nc'))
+    bias = xr.opendataset(bias_path[0])
+
+    resampler = SeasonResampler(['DJF', 'MAM', 'JJA', 'SON'])
+    obs_mean = obs.resample(time = resampler).mean(dim = 'time')
+
     # Initialize plot
     fig, ax = plt.subplots(1, 1, figsize = (20, 5))
 
@@ -831,7 +981,7 @@ def concat_ds(var):
     
 # ======================
 # ---- Entry Point ----
-# # ======================
+# ======================
 
 if __name__ == '__main__':
 
@@ -840,13 +990,12 @@ if __name__ == '__main__':
     #     concat_ds(variable)
     #     logger.info(f'Concatenation complete for {variable}.')
 
-    concat_ds('tmmx')
-
-    # db_pro_map = db_process_map('tmmx_debiasing_process_feb', save = True)
+    db_pro_map = db_process_map('tmmx_debiasing_process_feb', save = True)
     # sph_scatter = annual_scatter(stats = ['median', '0.95', '0.05'], save_name = 'annual_scatter_sph', save = True)
     # trend = trend_plt('tmmn_vs_tmmx_trend_plt', save = True)
     # cdf = cdf_plt('tmmn_pr_srad_uas_cdf_plt', save = True)
     # bias_map = seasonal_bias(save = True)
+    pr_cdf_plt = pr_cdf(save_name = 'pr_cdf_plot', save = True)
 
 
 
