@@ -9,6 +9,7 @@ import glob
 from loguru import logger
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
+import numpy as np
 import os
 import pandas as pd
 from pathlib import Path
@@ -113,7 +114,7 @@ def db_process_map(save_name = 'db_process_map', save = False):
     # Open datasets
     obs, hist, fut, debiased_hist, debiased_fut = open_datasets('tmmx', mod_sep = True)
     bias_path = glob.glob(str(parent_dir / 'wrfout' / 'bias' / f'*tmmx*.nc'))
-    bias = xr.opendataset(bias_path[0])
+    bias = xr.open_dataset(bias_path[0])
 
     # Initialize plot
     fig, ax = plt.subplots(1, 3, figsize = (15, 6), subplot_kw = {'projection': ccrs.PlateCarree()})
@@ -130,7 +131,7 @@ def db_process_map(save_name = 'db_process_map', save = False):
     # Average model data
     hist_mean = hist.sel(time = (hist.time.dt.month == 2) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
     debiased_hist_mean = debiased_hist.sel(time = (hist.time.dt.month == 2) & (hist.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
-    bias_mean = bias.sel(time = (bias.time.dt.month == 2) & (bias.time.dt.year.isin(range(1985, 2015)))).mean(dim = 'time')
+    bias_mean = bias.sel(time = (bias.time.dt.month == 2)).mean(dim = 'time')
 
     # Normalize colorbar for raw and debiased model data
     mod_norm = mcolors.TwoSlopeNorm(vmin = 270, vmax = 290, vcenter = 280)
@@ -835,13 +836,13 @@ def seasonal_bias(save_name = 'seasonal_bias_pr', save = False):
     from xarray.groupers import SeasonResampler
     logger.info(f'Creating mean bias map for pr.')
 
-    # open datasets
-    obs, hist, fut, debiased_hist, debiased_fut = open_datasets('pr', mod_sep = True)
+    # Open datasets
+    bias_path = glob.glob(str(parent_dir / 'wrfout' / 'bias' / f'*pr*.nc'))
+    bias = xr.open_dataset(bias_path[0])
 
     # Organize data by season
     resampler = SeasonResampler(['DJF', 'MAM', 'JJA', 'SON'])
-    obs_mean = obs.resample(time = resampler).mean(dim = 'time')
-    hist_mean = hist.resample(time = resampler).mean(dim = 'time')
+    bias_mean = bias.resample(time = resampler).mean(dim = 'time')
 
     # Initialize plot
     fig, ax = plt.subplots(2, 2, figsize = (7, 7.5), subplot_kw = {'projection': ccrs.PlateCarree()})
@@ -856,7 +857,7 @@ def seasonal_bias(save_name = 'seasonal_bias_pr', save = False):
     ele_ds = xr.open_dataset(ele_path[0])
 
     # Fix color range for bias values
-    norm = mcolors.TwoSlopeNorm(vmin = 0, vmax = 3, vcenter = 1)
+    norm = mcolors.TwoSlopeNorm(vmin = 0.6, vmax = 1.4, vcenter = 1)
 
     # Create list of months to show in plots
     seasons = [12, 3, 6, 9] # Resampler organizes data by season with the timestamp on the first day of the season
@@ -864,26 +865,24 @@ def seasonal_bias(save_name = 'seasonal_bias_pr', save = False):
 
     for ax, season, label in zip(axes, seasons, labels):
         # Select season of interest from the dataset and calcualte its mean along the time dimension
-        obs_season_mean = obs_mean.sel(time = obs_mean.time.dt.month == season).mean(dim = 'time')
-        hist_season_mean = hist_mean.sel(time = hist_mean.time.dt.month == season).mean(dim = 'time')
-
-        # Calculate the bias at each location
-        bias = hist_season_mean['pr'].values / obs_season_mean['pr'].values
+        bias_season_mean = bias_mean.sel(time = bias_mean.time.dt.month == season).mean(dim = 'time')
+        print(f'Max: {bias_season_mean["pr"].max().values}')
+        print(f'Min: {bias_season_mean["pr"].min().values}')
 
         # Restict panel size to accomodate for curve in grid creating white space
         ax.set_extent([-114, -110, 39.3, 43.17], crs = ccrs.PlateCarree())
 
-        avg_plt = ax.contourf(obs.lon.values[0],
-                        obs.lat.values[0], 
-                        bias,
+        avg_plt = ax.contourf(bias.lon.values[0],
+                        bias.lat.values[0], 
+                        bias_season_mean['pr'].values,
                         cmap = cmap('precip_diff_12lev'),
                         transform = ccrs.PlateCarree(), # Tells cartopy lat/lon values are in degrees
                         norm = norm
         )
 
         # Add elevation contour lines
-        ele_data = ax.contour(obs.lon.values[0],
-                        obs.lat.values[0], 
+        ele_data = ax.contour(bias.lon.values[0],
+                        bias.lat.values[0], 
                         ele_ds['HGT'].values, 
                         levels = [1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000], 
                         colors = 'k', 
@@ -908,7 +907,7 @@ def seasonal_bias(save_name = 'seasonal_bias_pr', save = False):
                 norm = norm, 
                 orientation = 'horizontal', 
                 label = f'pr ({units["pr"]})', 
-                ticks = [0, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3], 
+                ticks = [0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4], 
                 shrink = 0.65, 
                 pad = 0.05)
 
@@ -924,14 +923,51 @@ def heat_map(save_name = 'CC_to_bias_heat_map', save = False):
     Create a heat map showing the correlation between the bias and the climate change signal for each variable.
     """
 
-    # Open datasets
-    cc_signal_path = glob.glob(str(parent_dir / 'wrfout' / 'fut_offset' / f'*tmmx*.nc'))
-    cc_signal = xr.opendataset(cc_signal_path[0])
-    bias_path = glob.glob(str(parent_dir / 'wrfout' / 'bias' / f'*tmmx*.nc'))
-    bias = xr.opendataset(bias_path[0])
+    import matplotlib.ticker as ticker
+    from xarray.groupers import SeasonResampler
 
-    resampler = SeasonResampler(['DJF', 'MAM', 'JJA', 'SON'])
-    obs_mean = obs.resample(time = resampler).mean(dim = 'time')
+    # SLC airport coordinates
+    lat = 40.788
+    lon = -111.978
+
+    # Define all variables and seasons
+    variables = ['tmmx', 'tmmn', 'pr', 'sph', 'srad', 'uas', 'vas']
+    seasons = ['DJF', 'MAM', 'JJA', 'SON']
+
+    # Create empty lists for each season
+    results = {
+        'DJF' : [],
+        'MAM' : [],
+        'JJA' : [],
+        'SON' : []
+    }
+
+    for var in variables:
+        # Open datasets
+        cc_signal_path = glob.glob(str(parent_dir / 'wrfout' / 'fut_offset' / f'*{var}*.nc'))
+        cc_signal = xr.open_dataset(cc_signal_path[0])
+        bias_path = glob.glob(str(parent_dir / 'wrfout' / 'bias' / f'*{var}*.nc'))
+        bias = xr.open_dataset(bias_path[0])
+
+        # Slice dataset to a specific location
+        cc_signal_sel = loc_sel(cc_signal, var, lat, lon)
+        bias_sel = loc_sel(bias, var, lat, lon)
+
+        # Resample datasets by seasons
+        resampler = SeasonResampler(seasons)
+        cc_season = cc_signal.resample(time = resampler).mean(dim = 'time')
+        bias_season = bias.resample(time = resampler).mean(dim = 'time')
+
+        for month, season in zip([12, 3, 6, 9], seasons):
+            # Select season of interest from the dataset and calcualte its mean along the time dimension
+            cc_mean = cc_season.sel(time = cc_season.time.dt.month == month).mean()
+            bias_mean = bias_season.sel(time = bias_season.time.dt.month == month).mean()
+
+            # Calculate ratio
+            ratio = cc_mean / bias_mean
+
+            # Save ratio to dictionary
+            results[season].append(abs(ratio[var].values))
 
     # Initialize plot
     fig, ax = plt.subplots(1, 1, figsize = (20, 5))
@@ -940,17 +976,30 @@ def heat_map(save_name = 'CC_to_bias_heat_map', save = False):
     levels = [0, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.4, 2.6, 2.8, 3]
     norm = mcolors.TwoSlopeNorm(vmin = 0, vmax = 3, vcenter = 1) 
 
-    # Define x and y axes as variables and seasons
-    variables = range(1, 8) # 7 variables
-    seasons = range(1, 5) # 4 seasons
+    # Reorganize ratio data into usable format
+    ratios = np.array([[float(np.asarray(val).item()) for val in results[season]] for season in seasons], dtype = float)
 
     # Plot data as a heat map
-    data = ax.pcolormesh(variables, seasons, snow_fractions, shading = 'auto', cmap  = cmap.cmap('MPL_bwr', revBool = True), norm = norm)
+    data = ax.pcolormesh(ratios, 
+                        shading = 'auto', 
+                        cmap  = cmap('BlueDarkRed18'), 
+                        norm = norm, 
+                        edgecolor = 'black', 
+                        linewidth = 0.5)
     cbar = fig.colorbar(data, ax = ax, orientation = 'vertical', norm = norm, ticks = levels, pad = 0.02, extend = 'both', boundaries = levels)
     cbar.ax.xaxis.set_major_formatter(ticker.FormatStrFormatter('%.0f'))
 
-    ax.set_xticks(['tmmx', 'tmmn', 'pr', 'sph', 'srad', 'uas', 'vas'])
-    ax.set_yticks(['DJF', 'MAM', 'JJA', 'SON'])
+    ax.set_xticks([0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5])
+    ax.set_xticklabels(variables)
+    ax.set_yticks([0.5, 1.5, 2.5, 3.5])
+    ax.set_yticklabels(seasons)
+
+    # Opt to save image to sub directory
+    if save:
+        os.makedirs(current_dir / 'figures', exist_ok = True)
+        save_path = current_dir / 'figures' / f'{save_name}.png' # Save using actual lat and lon values used
+        fig.savefig(save_path, dpi = 300, bbox_inches = 'tight')
+        logger.success(f'Climate change heat map: {save_path}')
 
 def concat_ds(var):
     """
@@ -990,12 +1039,14 @@ if __name__ == '__main__':
     #     concat_ds(variable)
     #     logger.info(f'Concatenation complete for {variable}.')
 
-    db_pro_map = db_process_map('tmmx_debiasing_process_feb', save = True)
+    # db_pro_map = db_process_map('tmmx_debiasing_process_feb', save = True)
     # sph_scatter = annual_scatter(stats = ['median', '0.95', '0.05'], save_name = 'annual_scatter_sph', save = True)
     # trend = trend_plt('tmmn_vs_tmmx_trend_plt', save = True)
     # cdf = cdf_plt('tmmn_pr_srad_uas_cdf_plt', save = True)
     # bias_map = seasonal_bias(save = True)
-    pr_cdf_plt = pr_cdf(save_name = 'pr_cdf_plot', save = True)
+    # pr_cdf_plt = pr_cdf(save_name = 'pr_cdf_plot', save = True)
+    cc_heat_map = heat_map(save = True)
+
 
 
 
